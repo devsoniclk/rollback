@@ -1,7 +1,7 @@
 import difflib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from .core import Checkpoint, RollbackSession
 
 
@@ -40,12 +40,36 @@ def _read_content(path: Optional[str]) -> List[str]:
         return []
 
 
-def compute_diff(session: RollbackSession, from_cp: Checkpoint, to_cp: Optional[Checkpoint] = None) -> DiffSummary:
+def compute_diff(
+    session: RollbackSession,
+    from_checkpoint: Union[Checkpoint, str],
+    to_checkpoint: Optional[Union[Checkpoint, str]] = None,
+) -> DiffSummary:
     """
-    Computes unified diffs between from_cp and to_cp (or current disk if to_cp is None).
+    Computes unified diffs between two checkpoints, or from a checkpoint to live workspace.
+    Accepts Checkpoint instances or string checkpoint IDs / tag aliases.
     """
-    to_files = to_cp.files if to_cp else session.scan_workspace()
-    to_id = to_cp.id if to_cp else "LIVE_WORKSPACE"
+    if isinstance(from_checkpoint, str):
+        resolved_from = session.get_checkpoint(from_checkpoint)
+        if not resolved_from:
+            raise ValueError(f"Baseline checkpoint or tag '{from_checkpoint}' not found.")
+        from_cp = resolved_from
+    else:
+        from_cp = from_checkpoint
+
+    if to_checkpoint is not None:
+        if isinstance(to_checkpoint, str):
+            resolved_to = session.get_checkpoint(to_checkpoint)
+            if not resolved_to:
+                raise ValueError(f"Target checkpoint or tag '{to_checkpoint}' not found.")
+            to_cp = resolved_to
+        else:
+            to_cp = to_checkpoint
+        to_files = to_cp.files
+        to_id = to_cp.id
+    else:
+        to_files = session.scan_workspace()
+        to_id = "LIVE_WORKSPACE"
 
     all_paths = set(from_cp.files.keys()).union(to_files.keys())
     deltas: List[FileDelta] = []

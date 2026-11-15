@@ -108,3 +108,51 @@ def test_binary_file_handling(workspace):
 
     session.revert(cp.id)
     assert bin_file.read_bytes() == sample_bytes
+
+
+def test_checkpoint_tagging_and_resolution(workspace):
+    f = workspace / "config.json"
+    f.write_text('{"version": 1}')
+
+    session = create_session(str(workspace))
+    cp1 = session.checkpoint("initial_cfg")
+    session.tag(cp1.id, "stable")
+
+    # Get by tag
+    resolved = session.get_checkpoint("stable")
+    assert resolved is not None
+    assert resolved.id == cp1.id
+
+    # Get by HEAD
+    head_cp = session.get_checkpoint("HEAD")
+    assert head_cp is not None
+    assert head_cp.id == cp1.id
+
+    # Mutate and revert using tag name
+    f.write_text('{"version": 999}')
+    actions = session.revert("stable")
+    assert actions.get("config.json") == "restored"
+    assert f.read_text() == '{"version": 1}'
+
+
+def test_clean_garbage_collection(workspace):
+    f = workspace / "temp.txt"
+    session = create_session(str(workspace))
+
+    # Generate 5 checkpoints with distinct blob contents
+    for i in range(5):
+        f.write_text(f"iteration content {i}\n")
+        session.checkpoint(f"step_{i}")
+
+    assert len(session.history) == 5
+
+    # Retain only the latest 2 checkpoints
+    stats = session.clean(keep_last=2)
+    assert stats["checkpoints_removed"] == 3
+    assert stats["blobs_removed"] >= 1
+    assert len(session.history) == 2
+
+    # Verify latest checkpoint still reverts cleanly
+    f.write_text("corrupted after clean\n")
+    session.revert("HEAD")
+    assert f.read_text() == "iteration content 4\n"

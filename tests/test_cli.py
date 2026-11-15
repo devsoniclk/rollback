@@ -29,9 +29,9 @@ def test_cli_lifecycle(workspace):
     assert res.returncode == 0
     assert "Initialized rollback journal" in res.stdout
 
-    # 2. Snapshot
+    # 2. Snapshot with tag
     res = subprocess.run(
-        [sys.executable, "-m", "rollback.cli", "snapshot", "init_snap", "--root", str(workspace)],
+        [sys.executable, "-m", "rollback.cli", "snapshot", "init_snap", "--tag", "stable_v1", "--root", str(workspace)],
         cwd=str(repo_root),
         capture_output=True,
         text=True,
@@ -39,6 +39,7 @@ def test_cli_lifecycle(workspace):
     )
     assert res.returncode == 0
     assert "Created checkpoint:" in res.stdout
+    assert "stable_v1" in res.stdout
 
     # 3. Modify & Diff
     f.write_text("v2 rogue\n")
@@ -53,9 +54,9 @@ def test_cli_lifecycle(workspace):
     assert "Diff:" in res.stdout
     assert "[MODIFIED] test.txt" in res.stdout
 
-    # 4. Revert
+    # 4. Revert using tag
     res = subprocess.run(
-        [sys.executable, "-m", "rollback.cli", "revert", "--root", str(workspace)],
+        [sys.executable, "-m", "rollback.cli", "revert", "stable_v1", "--root", str(workspace)],
         cwd=str(repo_root),
         capture_output=True,
         text=True,
@@ -64,3 +65,14 @@ def test_cli_lifecycle(workspace):
     assert res.returncode == 0
     assert "[RESTORED] test.txt" in res.stdout
     assert f.read_text() == "v1\n"
+
+    # 5. Clean / GC
+    res = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "clean", "--keep", "1", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res.returncode == 0
+    assert "Cleaned journal:" in res.stdout

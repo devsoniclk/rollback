@@ -39,3 +39,4 @@ htmlcov/
 .rollback/
 sample_workspace/
 .DS_Store
+uv.lock
