@@ -1,7 +1,7 @@
 import argparse
 import sys
 from pathlib import Path
-from .core import RollbackSession
+from .core import RevertPlan, RollbackSession
 from .diff import compute_diff
 
 
@@ -31,7 +31,31 @@ def main() -> None:
     # Revert
     p_revert = subparsers.add_parser("revert", help="Revert to a checkpoint ID, tag, or last step.")
     p_revert.add_argument("identifier", nargs="?", default=None, help="Target checkpoint ID or tag. If omitted, reverts 1 step.")
+    p_revert.add_argument("--dry-run", action="store_true", help="Preview revert operations without modifying disk.")
     p_revert.add_argument("--root", default=".", help="Root directory path.")
+
+    # Plan
+    p_plan = subparsers.add_parser("plan", help="Preview operations needed to revert to target state.")
+    p_plan.add_argument("identifier", nargs="?", default="HEAD", help="Target checkpoint ID or tag.")
+    p_plan.add_argument("--root", default=".", help="Root directory path.")
+
+    # Branch
+    p_branch = subparsers.add_parser("branch", help="Manage timeline branches for parallel exploration.")
+    p_branch.add_argument("subaction", choices=["list", "create"], default="list", nargs="?", help="Subaction: list or create.")
+    p_branch.add_argument("name", nargs="?", default=None, help="Branch name when creating.")
+    p_branch.add_argument("--from-cp", default=None, help="Source checkpoint (defaults to HEAD).")
+    p_branch.add_argument("--root", default=".", help="Root directory path.")
+
+    # Checkout
+    p_checkout = subparsers.add_parser("checkout", help="Switch workspace to a branch or checkpoint.")
+    p_checkout.add_argument("target", help="Branch name or checkpoint ID/tag.")
+    p_checkout.add_argument("--root", default=".", help="Root directory path.")
+
+    # Bundle
+    p_bundle = subparsers.add_parser("bundle", help="Export or import portable session archives (.rbk.tar.gz).")
+    p_bundle.add_argument("action", choices=["export", "import"], help="Export or import bundle.")
+    p_bundle.add_argument("path", help="Archive file path (.rbk.tar.gz).")
+    p_bundle.add_argument("--root", default=".", help="Target workspace root directory.")
 
     # Diff
     p_diff = subparsers.add_parser("diff", help="Show diff against a checkpoint or between two checkpoints.")
@@ -72,19 +96,80 @@ def main() -> None:
             print(f"Error: {e}")
             sys.exit(1)
 
+    elif args.command == "plan":
+        try:
+            plan = session.plan_revert(args.identifier)
+            print(f"=== Revert Plan to {plan.target_checkpoint_id} ('{plan.target_label}') ===")
+            print(f"Total changes: {plan.total_changes} ({plan.total_bytes_affected} bytes affected)")
+            for r in plan.files_to_restore:
+                print(f"  [RESTORE]   {r}")
+            for d in plan.files_to_delete:
+                print(f"  [DELETE]    {d}")
+            for u in plan.files_to_resurrect:
+                print(f"  [RESURRECT] {u}")
+        except Exception as e:
+            print(f"Error generating plan: {e}")
+            sys.exit(1)
+
     elif args.command == "revert":
         if not session.history:
             print("No checkpoints found to revert to.")
             sys.exit(1)
         target = args.identifier or session.history[-1]
         try:
-            actions = session.revert(target)
-            print(f"Reverted to {target}: {len(actions)} files modified/restored.")
-            for path, act in actions.items():
-                print(f"  [{act.upper()}] {path}")
+            if args.dry_run:
+                plan = session.revert(target, dry_run=True)
+                assert isinstance(plan, RevertPlan)
+                print(f"Dry-run plan for {target}: {plan.total_changes} changes ({plan.total_bytes_affected} bytes affected).")
+                for r in plan.files_to_restore:
+                    print(f"  [WILL RESTORE]   {r}")
+                for d in plan.files_to_delete:
+                    print(f"  [WILL DELETE]    {d}")
+                for u in plan.files_to_resurrect:
+                    print(f"  [WILL RESURRECT] {u}")
+            else:
+                actions = session.revert(target)
+                print(f"Reverted to {target}: {len(actions)} files modified/restored.")
+                for path, act in actions.items():
+                    print(f"  [{act.upper()}] {path}")
         except Exception as e:
             print(f"Error reverting: {e}")
             sys.exit(1)
+
+    elif args.command == "branch":
+        if args.subaction == "list" or not args.name:
+            b_info = session.list_branches()
+            print(f"Current branch: * {b_info['current']}")
+            for b_name, b_cid in b_info["branches"].items():
+                mark = "*" if b_name == b_info["current"] else " "
+                print(f"  {mark} {b_name} -> {b_cid}")
+        else:
+            cid = session.create_branch(args.name, from_checkpoint=args.from_cp)
+            print(f"Created branch '{args.name}' pointing to {cid}.")
+
+    elif args.command == "checkout":
+        try:
+            actions = session.checkout(args.target)
+            print(f"Switched to '{args.target}' ({len(actions)} file operations).")
+        except Exception as e:
+            print(f"Error checking out '{args.target}': {e}")
+            sys.exit(1)
+
+    elif args.command == "bundle":
+        if args.action == "export":
+            try:
+                out = session.export_bundle(args.path)
+                print(f"Exported session bundle to {out}")
+            except Exception as e:
+                print(f"Error exporting bundle: {e}")
+                sys.exit(1)
+        elif args.action == "import":
+            try:
+                s = RollbackSession.import_bundle(args.path, target_root=args.root)
+                print(f"Imported session bundle into {s.root} ({len(s.history)} checkpoints loaded).")
+            except Exception as e:
+                print(f"Error importing bundle: {e}")
+                sys.exit(1)
 
     elif args.command == "diff":
         if not session.history:
@@ -111,7 +196,8 @@ def main() -> None:
             cp = session.get_checkpoint(cid)
             if cp:
                 tags_str = f" [tags: {', '.join(tag_reverse_map[cid])}]" if cid in tag_reverse_map else ""
-                print(f"  {cp.id}{tags_str} | {cp.label} | {len(cp.files)} files")
+                branch_str = f" ({cp.branch})" if cp.branch else ""
+                print(f"  {cp.id}{tags_str}{branch_str} | {cp.label} | {len(cp.files)} files")
 
     elif args.command == "clean":
         res = session.clean(keep_last=args.keep, purge_all=args.all)

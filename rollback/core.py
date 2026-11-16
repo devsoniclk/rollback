@@ -2,10 +2,13 @@ import hashlib
 import json
 import os
 import shutil
+import tarfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+from .security import SecurityPolicy, SecurityViolationError
 
 
 @dataclass
@@ -25,12 +28,40 @@ class Checkpoint:
     timestamp: float
     files: Dict[str, FileState] = field(default_factory=dict)
     parent_id: Optional[str] = None
+    branch: str = "main"
+
+
+@dataclass
+class RevertPlan:
+    """Preview of filesystem mutations that will occur upon revert."""
+    target_checkpoint_id: str
+    target_label: str
+    files_to_restore: List[str] = field(default_factory=list)
+    files_to_delete: List[str] = field(default_factory=list)
+    files_to_resurrect: List[str] = field(default_factory=list)
+    total_bytes_affected: int = 0
+
+    @property
+    def total_changes(self) -> int:
+        return len(self.files_to_restore) + len(self.files_to_delete) + len(self.files_to_resurrect)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "target_checkpoint_id": self.target_checkpoint_id,
+            "target_label": self.target_label,
+            "files_to_restore": self.files_to_restore,
+            "files_to_delete": self.files_to_delete,
+            "files_to_resurrect": self.files_to_resurrect,
+            "total_bytes_affected": self.total_bytes_affected,
+            "total_changes": self.total_changes,
+        }
 
 
 class RollbackSession:
     """
     Manages a transactional workspace session for an autonomous AI agent.
-    Provides sub-5ms atomic checkpoints, diff previews, tags, and instant rollback.
+    Provides sub-5ms atomic checkpoints, security boundaries, diff previews, tags,
+    branching timelines, dry-run revert planning, and portable bundle archiving.
     """
 
     DEFAULT_IGNORES = {
@@ -44,12 +75,19 @@ class RollbackSession:
         ".DS_Store",
     }
 
-    def __init__(self, root_dir: str = ".", journal_dir: Optional[str] = None, ignore_patterns: Optional[Set[str]] = None):
+    def __init__(
+        self,
+        root_dir: str = ".",
+        journal_dir: Optional[str] = None,
+        ignore_patterns: Optional[Set[str]] = None,
+        security_policy: Optional[SecurityPolicy] = None,
+    ):
         self.root = Path(root_dir).resolve()
         self.journal_dir = Path(journal_dir) if journal_dir else self.root / ".rollback"
         self.blobs_dir = self.journal_dir / "blobs"
         self.checkpoints_dir = self.journal_dir / "checkpoints"
         self.ignores = set(self.DEFAULT_IGNORES) if ignore_patterns is None else set(ignore_patterns)
+        self.security_policy = security_policy
 
         self.journal_dir.mkdir(parents=True, exist_ok=True)
         self.blobs_dir.mkdir(parents=True, exist_ok=True)
@@ -57,8 +95,12 @@ class RollbackSession:
 
         self.history: List[str] = []
         self.tags: Dict[str, str] = {}
+        self.branches: Dict[str, str] = {}
+        self.current_branch: str = "main"
+
         self._load_history()
         self._load_tags()
+        self._load_branches()
 
     def _should_ignore(self, rel_path: Path) -> bool:
         parts = rel_path.parts
@@ -90,6 +132,9 @@ class RollbackSession:
 
         if target_files:
             for tf in target_files:
+                if self.security_policy:
+                    self.security_policy.validate_target_path(self.root / tf)
+
                 p = (self.root / tf).resolve()
                 try:
                     rel = p.relative_to(self.root).as_posix()
@@ -125,95 +170,153 @@ class RollbackSession:
         return states
 
     def checkpoint(self, label: str = "snapshot", target_files: Optional[List[str]] = None) -> Checkpoint:
-        """
-        Creates an immutable checkpoint of the workspace state.
-        Returns the created Checkpoint.
-        """
+        """Creates an immutable checkpoint of the workspace state."""
         cid = f"cp_{int(time.time() * 1000)}_{len(self.history):04d}"
         parent = self.history[-1] if self.history else None
         files = self.scan_workspace(target_files)
 
-        cp = Checkpoint(id=cid, label=label, timestamp=time.time(), files=files, parent_id=parent)
+        cp = Checkpoint(
+            id=cid,
+            label=label,
+            timestamp=time.time(),
+            files=files,
+            parent_id=parent,
+            branch=self.current_branch,
+        )
 
-        meta_path = self.checkpoints_dir / f"{cid}.json"
-        with open(meta_path, "w") as f:
+        cp_file = self.checkpoints_dir / f"{cid}.json"
+        with open(cp_file, "w") as f:
             json.dump(asdict(cp), f, indent=2)
 
         self.history.append(cid)
+        self.branches[self.current_branch] = cid
         self._save_history()
+        self._save_branches()
+
         return cp
 
-    def tag(self, identifier: str, tag_name: str) -> None:
-        """Assigns a named alias (tag) to an existing checkpoint."""
-        cp = self.get_checkpoint(identifier)
-        if not cp:
-            raise ValueError(f"Checkpoint '{identifier}' not found to tag.")
-        self.tags[tag_name] = cp.id
-        self._save_tags()
-
-    def get_checkpoint(self, identifier: Optional[str] = None) -> Optional[Checkpoint]:
-        """
-        Retrieves a checkpoint by ID, tag alias, or 'HEAD'.
-        If identifier is None or 'HEAD', returns the most recent checkpoint.
-        """
-        if not identifier or identifier.upper() == "HEAD":
+    def resolve_checkpoint_id(self, target: str) -> str:
+        """Resolves a checkpoint identifier from an exact ID, tag, branch, or HEAD alias."""
+        if target.upper() == "HEAD":
             if not self.history:
-                return None
-            target_id = self.history[-1]
-        elif identifier in self.tags:
-            target_id = self.tags[identifier]
-        else:
-            target_id = identifier
+                raise ValueError("No checkpoints exist in history.")
+            return self.history[-1]
 
-        meta_path = self.checkpoints_dir / f"{target_id}.json"
-        if not meta_path.exists():
+        if target in self.tags:
+            return self.tags[target]
+
+        if target in self.branches:
+            return self.branches[target]
+
+        if target in self.history:
+            return target
+
+        for cid in self.history:
+            if cid.startswith(target):
+                return cid
+
+        raise ValueError(f"Checkpoint or tag/branch '{target}' not found in history.")
+
+    def get_checkpoint(self, checkpoint_id: str) -> Optional[Checkpoint]:
+        cid = self.resolve_checkpoint_id(checkpoint_id)
+        cp_file = self.checkpoints_dir / f"{cid}.json"
+        if not cp_file.exists():
             return None
-        with open(meta_path, "r") as f:
+        with open(cp_file, "r") as f:
             data = json.load(f)
         files = {k: FileState(**v) for k, v in data.get("files", {}).items()}
         return Checkpoint(
             id=data["id"],
-            label=data.get("label", ""),
-            timestamp=data.get("timestamp", 0.0),
+            label=data["label"],
+            timestamp=data["timestamp"],
             files=files,
             parent_id=data.get("parent_id"),
+            branch=data.get("branch", "main"),
         )
 
-    def revert(self, identifier: Optional[str] = None) -> Dict[str, str]:
+    def plan_revert(self, checkpoint_id: str = "HEAD") -> RevertPlan:
+        """Generates a dry-run plan of operations required to revert without modifying disk."""
+        cid = self.resolve_checkpoint_id(checkpoint_id)
+        cp = self.get_checkpoint(cid)
+        if not cp:
+            raise ValueError(f"Checkpoint '{cid}' does not exist.")
+
+        current_states = self.scan_workspace()
+        files_to_restore = []
+        files_to_delete = []
+        files_to_resurrect = []
+        total_bytes = 0
+
+        # Check files in checkpoint
+        for rel_path, state in cp.files.items():
+            curr = current_states.get(rel_path)
+            if not state.exists:
+                if curr and curr.exists:
+                    files_to_delete.append(rel_path)
+            elif not curr or not curr.exists:
+                files_to_resurrect.append(rel_path)
+                total_bytes += state.size
+            elif curr.sha256 != state.sha256:
+                files_to_restore.append(rel_path)
+                total_bytes += state.size
+
+        # Check newly created files not in checkpoint
+        for rel_path, curr in current_states.items():
+            if rel_path not in cp.files and curr.exists:
+                if rel_path not in files_to_delete:
+                    files_to_delete.append(rel_path)
+
+        return RevertPlan(
+            target_checkpoint_id=cid,
+            target_label=cp.label,
+            files_to_restore=sorted(files_to_restore),
+            files_to_delete=sorted(files_to_delete),
+            files_to_resurrect=sorted(files_to_resurrect),
+            total_bytes_affected=total_bytes,
+        )
+
+    def revert(self, checkpoint_id: str = "HEAD", dry_run: bool = False) -> Union[Dict[str, str], RevertPlan]:
         """
-        Atomically reverts the workspace to the exact state at checkpoint identifier (or tag).
-        Removes newly created files, restores modified files, and resurrects deleted files.
-        Returns a dict of {rel_path: action_taken}.
+        Reverts the workspace to match the target checkpoint.
+        If dry_run=True, returns RevertPlan without mutating disk.
         """
-        target_cp = self.get_checkpoint(identifier)
-        if not target_cp:
-            raise ValueError(f"Checkpoint or tag '{identifier}' not found.")
+        if dry_run:
+            return self.plan_revert(checkpoint_id)
+
+        cid = self.resolve_checkpoint_id(checkpoint_id)
+        cp = self.get_checkpoint(cid)
+        if not cp:
+            raise ValueError(f"Checkpoint '{cid}' does not exist.")
 
         current_states = self.scan_workspace()
         actions: Dict[str, str] = {}
 
-        # 1. Identify files to remove (created after the checkpoint)
-        for rel_path in current_states:
-            if rel_path not in target_cp.files or not target_cp.files[rel_path].exists:
+        # 1. Clean up newly created files that did not exist in checkpoint
+        for rel_path, curr_state in current_states.items():
+            if rel_path not in cp.files:
                 target_file = self.root / rel_path
-                if target_file.exists():
+                if self.security_policy:
+                    self.security_policy.validate_target_path(target_file)
+                if target_file.exists() and target_file.is_file():
                     target_file.unlink()
                     actions[rel_path] = "removed"
 
-        # 2. Restore or resurrect files recorded in the target checkpoint
-        for rel_path, state in target_cp.files.items():
+        # 2. Revert / restore modified, deleted, or missing files
+        for rel_path, state in cp.files.items():
             target_file = self.root / rel_path
+            if self.security_policy:
+                self.security_policy.validate_target_path(target_file)
+
             if not state.exists:
-                if target_file.exists():
+                if target_file.exists() and target_file.is_file():
                     target_file.unlink()
                     actions[rel_path] = "removed"
                 continue
 
             curr = current_states.get(rel_path)
             if curr and curr.exists and curr.sha256 == state.sha256:
-                continue  # Content identical, no action needed
+                continue
 
-            # File needs restoration from blob storage
             if not state.backup_path or not Path(state.backup_path).exists():
                 raise RuntimeError(f"Corrupted journal: backup blob missing for {rel_path}")
 
@@ -222,7 +325,7 @@ class RollbackSession:
             shutil.copy2(state.backup_path, tmp_swap)
             if state.mode:
                 tmp_swap.chmod(state.mode)
-            tmp_swap.replace(target_file)  # Atomic POSIX replacement
+            tmp_swap.replace(target_file)
             actions[rel_path] = "restored"
 
         return actions
@@ -238,12 +341,105 @@ class RollbackSession:
         self._save_history()
         return actions
 
+    def tag(self, checkpoint_id: str, tag_name: str) -> None:
+        """Assigns a human-readable tag alias to a checkpoint."""
+        cid = self.resolve_checkpoint_id(checkpoint_id)
+        self.tags[tag_name] = cid
+        self._save_tags()
+
+    def get_tag(self, tag_name: str) -> Optional[str]:
+        return self.tags.get(tag_name)
+
+    def list_tags(self) -> Dict[str, str]:
+        return dict(self.tags)
+
+    def create_branch(self, branch_name: str, from_checkpoint: Optional[str] = None) -> str:
+        """Creates a new timeline branch pointing to the specified or current HEAD checkpoint."""
+        cid = self.resolve_checkpoint_id(from_checkpoint if from_checkpoint else "HEAD")
+        self.branches[branch_name] = cid
+        self._save_branches()
+        return cid
+
+    def checkout(self, branch_or_tag: str) -> Dict[str, str]:
+        """Switches workspace to the target branch or tag and restores files."""
+        cid = self.resolve_checkpoint_id(branch_or_tag)
+        actions = self.revert(cid)
+        if branch_or_tag in self.branches:
+            self.current_branch = branch_or_tag
+            self._save_branches()
+        return actions
+
+    def list_branches(self) -> Dict[str, Any]:
+        """Returns branch dictionary with current active branch marked."""
+        return {
+            "current": self.current_branch,
+            "branches": dict(self.branches),
+        }
+
+    def export_bundle(self, output_archive: str | Path, include_blobs: bool = True) -> Path:
+        """
+        Packages the rollback session, checkpoints, metadata, and blobs into a portable
+        compressed archive (.rbk.tar.gz) for cross-environment agent migration.
+        """
+        out_p = Path(output_archive).resolve()
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+
+        manifest = {
+            "version": "0.3.0",
+            "exported_at": time.time(),
+            "root_name": self.root.name,
+            "checkpoints_count": len(self.history),
+            "history": self.history,
+            "tags": self.tags,
+            "branches": self.branches,
+            "current_branch": self.current_branch,
+        }
+        manifest_file = self.journal_dir / "bundle_manifest.json"
+        with open(manifest_file, "w") as f:
+            json.dump(manifest, f, indent=2)
+
+        with tarfile.open(out_p, "w:gz") as tar:
+            tar.add(self.journal_dir, arcname=".rollback")
+
+        if manifest_file.exists():
+            manifest_file.unlink()
+
+        return out_p
+
+    @classmethod
+    def import_bundle(
+        cls,
+        archive_path: str | Path,
+        target_root: str | Path = ".",
+        security_policy: Optional[SecurityPolicy] = None,
+    ) -> "RollbackSession":
+        """
+        Restores a rollback session from an exported .rbk.tar.gz archive into target_root.
+        """
+        arch_p = Path(archive_path).resolve()
+        if not arch_p.exists():
+            raise FileNotFoundError(f"Bundle archive '{archive_path}' not found.")
+
+        dest_root = Path(target_root).resolve()
+        dest_root.mkdir(parents=True, exist_ok=True)
+        dest_journal = dest_root / ".rollback"
+
+        with tarfile.open(arch_p, "r:gz") as tar:
+            for member in tar.getmembers():
+                target_path = (dest_root / member.name).resolve()
+                try:
+                    target_path.relative_to(dest_root)
+                except ValueError:
+                    raise SecurityViolationError(f"Malicious tar entry detected outside root: {member.name}")
+                if hasattr(tarfile, "data_filter"):
+                    tar.extract(member, path=dest_root, filter="data")
+                else:
+                    tar.extract(member, path=dest_root)
+
+        return cls(root_dir=str(dest_root), journal_dir=str(dest_journal), security_policy=security_policy)
+
     def clean(self, keep_last: int = 10, purge_all: bool = False) -> Dict[str, int]:
-        """
-        Prunes old checkpoints and deletes orphaned blobs to reclaim storage.
-        Keeps the latest `keep_last` checkpoints (or none if `purge_all=True`).
-        Returns summary: {'checkpoints_removed': int, 'blobs_removed': int, 'bytes_reclaimed': int}
-        """
+        """Prunes old checkpoints and deletes orphaned blobs."""
         if purge_all:
             retained_ids = set()
             removed_ids = set(self.history)
@@ -262,11 +458,12 @@ class RollbackSession:
         self.history = [cid for cid in self.history if cid in retained_ids]
         self._save_history()
 
-        # Update tags pointing to purged checkpoints
         self.tags = {k: v for k, v in self.tags.items() if v in retained_ids}
         self._save_tags()
 
-        # Collect all active blob digests
+        self.branches = {k: v for k, v in self.branches.items() if v in retained_ids}
+        self._save_branches()
+
         active_digests: Set[str] = set()
         for cid in retained_ids:
             cp = self.get_checkpoint(cid)
@@ -291,7 +488,6 @@ class RollbackSession:
                     except (OSError, FileNotFoundError):
                         pass
 
-        # Clean empty directories in blobs
         for root, dirs, _ in os.walk(self.blobs_dir, topdown=False):
             for d in dirs:
                 dir_path = Path(root) / d
@@ -328,6 +524,26 @@ class RollbackSession:
             with open(tags_path, "r") as f:
                 self.tags = json.load(f)
 
+    def _save_branches(self) -> None:
+        branch_path = self.journal_dir / "branches.json"
+        payload = {
+            "current": self.current_branch,
+            "branches": self.branches,
+        }
+        with open(branch_path, "w") as f:
+            json.dump(payload, f)
 
-def create_session(root_dir: str = ".") -> RollbackSession:
-    return RollbackSession(root_dir)
+    def _load_branches(self) -> None:
+        branch_path = self.journal_dir / "branches.json"
+        if branch_path.exists():
+            try:
+                with open(branch_path, "r") as f:
+                    data = json.load(f)
+                    self.current_branch = data.get("current", "main")
+                    self.branches = data.get("branches", {})
+            except Exception:
+                pass
+
+
+def create_session(root_dir: str = ".", security_policy: Optional[SecurityPolicy] = None) -> RollbackSession:
+    return RollbackSession(root_dir, security_policy=security_policy)

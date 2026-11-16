@@ -54,7 +54,32 @@ def test_cli_lifecycle(workspace):
     assert "Diff:" in res.stdout
     assert "[MODIFIED] test.txt" in res.stdout
 
-    # 4. Revert using tag
+    # 4. Revert dry-run & Plan
+    res = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "revert", "stable_v1", "--dry-run", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res.returncode == 0
+    assert "Dry-run plan for stable_v1" in res.stdout
+    assert "[WILL RESTORE]   test.txt" in res.stdout
+    # Ensure dry run did not revert file yet
+    assert f.read_text() == "v2 rogue\n"
+
+    res_plan = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "plan", "stable_v1", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_plan.returncode == 0
+    assert "Revert Plan to" in res_plan.stdout
+    assert "[RESTORE]   test.txt" in res_plan.stdout
+
+    # 5. Revert using tag
     res = subprocess.run(
         [sys.executable, "-m", "rollback.cli", "revert", "stable_v1", "--root", str(workspace)],
         cwd=str(repo_root),
@@ -66,7 +91,52 @@ def test_cli_lifecycle(workspace):
     assert "[RESTORED] test.txt" in res.stdout
     assert f.read_text() == "v1\n"
 
-    # 5. Clean / GC
+    # 6. Branching CLI
+    res_bcreate = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "branch", "create", "feature_x", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_bcreate.returncode == 0
+    assert "Created branch 'feature_x'" in res_bcreate.stdout
+
+    res_blist = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "branch", "list", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_blist.returncode == 0
+    assert "feature_x" in res_blist.stdout
+
+    # 7. Bundle Export & Import CLI
+    bundle_file = workspace / "bundle.rbk.tar.gz"
+    res_bexp = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "bundle", "export", str(bundle_file), "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_bexp.returncode == 0
+    assert "Exported session bundle to" in res_bexp.stdout
+    assert bundle_file.exists()
+
+    ws_import = workspace / "imported_ws"
+    res_bimp = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "bundle", "import", str(bundle_file), "--root", str(ws_import)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_bimp.returncode == 0
+    assert "Imported session bundle into" in res_bimp.stdout
+
+    # 8. Clean / GC
     res = subprocess.run(
         [sys.executable, "-m", "rollback.cli", "clean", "--keep", "1", "--root", str(workspace)],
         cwd=str(repo_root),
