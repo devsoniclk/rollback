@@ -8,7 +8,10 @@ from typing import Any, Dict, List, Optional
 
 from .core import RevertPlan, RollbackSession
 from .diff import compute_diff
+from .git_bridge import GitBridge
 from .html_report import render_html_report
+from .merge import MergeConflictError, MergeEngine
+from .patch import apply_patch, export_patch
 from .security import SecurityPolicy, SecurityViolationError
 
 
@@ -149,6 +152,93 @@ class RollbackMCPServer:
                     },
                 },
             },
+            {
+                "name": "rollback_merge",
+                "description": "Execute 3-way branch merge with automatic common ancestor detection and conflict markers.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "source_branch": {
+                            "type": "string",
+                            "description": "Source branch to merge into current active branch.",
+                        },
+                        "target_branch": {
+                            "type": "string",
+                            "description": "Optional target branch (defaults to current active branch).",
+                        },
+                        "abort_on_conflict": {
+                            "type": "boolean",
+                            "description": "If true, aborts and reverts if conflicts occur instead of writing conflict markers.",
+                            "default": False,
+                        },
+                    },
+                    "required": ["source_branch"],
+                },
+            },
+            {
+                "name": "rollback_patch",
+                "description": "Export or apply standard unified diff patch files.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["export", "apply"],
+                            "description": "Whether to export or apply a unified patch.",
+                        },
+                        "from_checkpoint": {
+                            "type": "string",
+                            "description": "Baseline checkpoint ID/tag when exporting patch.",
+                        },
+                        "to_checkpoint": {
+                            "type": "string",
+                            "description": "Target checkpoint ID/tag when exporting patch (omitted for live workspace).",
+                        },
+                        "patch_content": {
+                            "type": "string",
+                            "description": "Raw unified diff patch text to apply.",
+                        },
+                        "patch_file": {
+                            "type": "string",
+                            "description": "Patch file path for export target or apply source.",
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Simulate patch application without modifying disk.",
+                            "default": False,
+                        },
+                    },
+                    "required": ["action"],
+                },
+            },
+            {
+                "name": "rollback_git_sync",
+                "description": "Synchronize rollback micro-checkpoints with local Git commits and inspect repository sync status.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["status", "export", "import"],
+                            "description": "Git bridge action to execute.",
+                        },
+                        "branch": {
+                            "type": "string",
+                            "description": "Rollback branch to export.",
+                        },
+                        "git_branch": {
+                            "type": "string",
+                            "description": "Git branch to export onto.",
+                        },
+                        "max_commits": {
+                            "type": "integer",
+                            "description": "Maximum number of recent Git commits to import.",
+                            "default": 10,
+                        },
+                    },
+                    "required": ["action"],
+                },
+            },
         ]
 
     def execute_tool(self, name: str, args: Dict[str, Any]) -> str:
@@ -274,6 +364,67 @@ class RollbackMCPServer:
                 "message": f"Interactive HTML dossier generated at {out_file}",
             }, indent=2)
 
+        elif name == "rollback_merge":
+            src_br = args["source_branch"]
+            tgt_br = args.get("target_branch")
+            abort_conf = args.get("abort_on_conflict", False)
+            res = self.session.merge_branch(
+                src_br, target_branch=tgt_br, abort_on_conflict=abort_conf
+            )
+            return json.dumps(res.to_dict(), indent=2)
+
+        elif name == "rollback_patch":
+            action = args["action"]
+            if action == "export":
+                from_id = args.get("from_checkpoint", "HEAD")
+                to_id = args.get("to_checkpoint")
+                patch_file = args.get("patch_file")
+                patch_text = export_patch(
+                    self.session, from_id, to_checkpoint=to_id, output_file=patch_file
+                )
+                return json.dumps({
+                    "status": "success",
+                    "action": "export",
+                    "from_checkpoint": from_id,
+                    "to_checkpoint": to_id,
+                    "patch_file": patch_file,
+                    "patch_length": len(patch_text),
+                    "patch_preview": patch_text[:1000],
+                }, indent=2)
+            elif action == "apply":
+                patch_src = args.get("patch_content") or args.get("patch_file")
+                if not patch_src:
+                    raise ValueError("Either 'patch_content' or 'patch_file' must be provided.")
+                dry_run = args.get("dry_run", False)
+                res = apply_patch(self.session, patch_src, dry_run=dry_run)
+                return json.dumps(res.to_dict(), indent=2)
+            else:
+                raise ValueError(f"Unknown patch action: {action}")
+
+        elif name == "rollback_git_sync":
+            action = args["action"]
+            bridge = GitBridge(self.session)
+            if action == "status":
+                status = bridge.get_status()
+                return json.dumps(status.to_dict(), indent=2)
+            elif action == "export":
+                res = bridge.export_to_git(
+                    branch=args.get("branch"),
+                    git_branch=args.get("git_branch"),
+                )
+                return json.dumps(res, indent=2)
+            elif action == "import":
+                max_c = args.get("max_commits", 10)
+                cids = bridge.import_from_git(max_commits=max_c)
+                return json.dumps({
+                    "status": "success",
+                    "action": "import",
+                    "imported_count": len(cids),
+                    "imported_checkpoints": cids,
+                }, indent=2)
+            else:
+                raise ValueError(f"Unknown git_sync action: {action}")
+
         raise ValueError(f"Unknown tool: {name}")
 
     def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -288,7 +439,7 @@ class RollbackMCPServer:
                     "protocolVersion": self.PROTOCOL_VERSION,
                     "serverInfo": {
                         "name": "rollback-engine",
-                        "version": "0.4.0",
+                        "version": "0.5.0",
                     },
                     "capabilities": {
                         "tools": {},

@@ -170,3 +170,26 @@ def test_cli_lifecycle(workspace):
     )
     assert res_rpl.returncode == 0
     assert "Replayed" in res_rpl.stdout
+
+    # 11. Patch CLI
+    patch_out = workspace / "test.patch"
+    res_patch = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "patch", "HEAD", "-o", str(patch_out), "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_patch.returncode == 0
+    assert "Exported patch to" in res_patch.stdout
+
+    # 12. Git Sync CLI
+    res_git = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "git-sync", "status", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_git.returncode == 0
+    assert "Git Bridge Status:" in res_git.stdout

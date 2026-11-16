@@ -5,7 +5,7 @@
 [![CI](https://github.com/devsoniclk/rollback/actions/workflows/ci.yml/badge.svg)](https://github.com/devsoniclk/rollback/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/rollback-engine/)
-[![Version](https://img.shields.io/badge/version-v0.4.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.4.0)
+[![Version](https://img.shields.io/badge/version-v0.5.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.5.0)
 
 ---
 
@@ -180,7 +180,7 @@ for path in plan.files_to_delete:
 plan = session.revert("stable", dry_run=True)
 ```
 
-### Timeline Branching (Multi-Hypothesis Agent Scratchpad)
+### Timeline Branching & 3-Way Merging
 ```python
 # Create experiment branch from current checkpoint
 session.create_branch("hypothesis_b")
@@ -193,6 +193,41 @@ session.checkpoint("hypothesis_b_result")
 
 # Instant switch back to main
 session.checkout("main")
+
+# Merge hypothesis_b back into main with 3-way DAG analysis
+result = session.merge_branch("hypothesis_b")
+print(f"Merge status: {result.status}")  # 'clean', 'fast-forward', 'conflict', 'up-to-date'
+if result.has_conflicts:
+    print(f"Conflicts formatted with markers: {result.conflicting_files}")
+```
+
+### Git Bidirectional Bridge
+Export rollback micro-checkpoints into a genuine Git repository with co-author trailers, or import Git commits:
+
+```python
+from rollback import GitBridge
+
+bridge = GitBridge(session)
+
+# Inspect synchronization status
+status = bridge.get_status()
+print(f"In sync with git: {status.git_head}")
+
+# Export checkpoints as sequential Git commits
+res = bridge.export_to_git(git_branch="main")
+print(f"Exported {res['exported_commits']} commits to Git.")
+```
+
+### Unified Diff Patch Export & Apply
+```python
+from rollback import export_patch, apply_patch
+
+# Generate unified diff patch between checkpoints
+patch = export_patch(session, from_checkpoint="cp_001", to_checkpoint="cp_002", output_file="refactor.patch")
+
+# Apply patch with pre/post atomic checkpoints
+apply_res = apply_patch(session, "refactor.patch", dry_run=False)
+print(f"Patched: {apply_res.files_affected}")
 ```
 
 ---
@@ -223,6 +258,18 @@ rollback mcp
 rollback branch create experiment_a
 rollback branch list
 rollback checkout experiment_a
+
+# Merge branches with 3-way conflict resolution
+rollback merge experiment_a [--into main] [--abort-on-conflict]
+
+# Export and apply unified patches
+rollback patch HEAD~1 HEAD -o feature.patch
+rollback apply-patch feature.patch [--dry-run]
+
+# Synchronize with Git repository
+rollback git-sync status
+rollback git-sync export [--git-branch main]
+rollback git-sync import --max-commits 10
 
 # Export / Import portable bundles
 rollback bundle export session.rbk.tar.gz

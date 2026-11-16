@@ -174,7 +174,8 @@ class RollbackSession:
     def checkpoint(self, label: str = "snapshot", target_files: Optional[List[str]] = None) -> Checkpoint:
         """Creates an immutable checkpoint of the workspace state."""
         cid = f"cp_{int(time.time() * 1000)}_{len(self.history):04d}"
-        parent = self.history[-1] if self.history else None
+        branch_head = self.branches.get(self.current_branch)
+        parent = branch_head if branch_head else (self.history[-1] if self.history else None)
         files = self.scan_workspace(target_files)
 
         cp = Checkpoint(
@@ -377,6 +378,37 @@ class RollbackSession:
             "current": self.current_branch,
             "branches": dict(self.branches),
         }
+
+    def find_common_ancestor(self, cp1_id: str, cp2_id: str) -> Optional[str]:
+        """Traces DAG parent links to find the lowest common ancestor of two checkpoints."""
+        cid1 = self.resolve_checkpoint_id(cp1_id)
+        cid2 = self.resolve_checkpoint_id(cp2_id)
+
+        ancestors1: Set[str] = set()
+        curr: Optional[str] = cid1
+        while curr:
+            ancestors1.add(curr)
+            cp = self.get_checkpoint(curr)
+            curr = cp.parent_id if cp else None
+
+        curr = cid2
+        while curr:
+            if curr in ancestors1:
+                return curr
+            cp = self.get_checkpoint(curr)
+            curr = cp.parent_id if cp else None
+
+        return self.history[0] if self.history else None
+
+    def merge_branch(
+        self,
+        source_branch: str,
+        target_branch: Optional[str] = None,
+        abort_on_conflict: bool = False,
+    ) -> Any:
+        """Merges changes from source_branch into target_branch (defaults to current branch)."""
+        from .merge import MergeEngine
+        return MergeEngine(self).merge(source_branch, target_branch, abort_on_conflict=abort_on_conflict)
 
     def export_bundle(self, output_archive: str | Path, include_blobs: bool = True) -> Path:
         """

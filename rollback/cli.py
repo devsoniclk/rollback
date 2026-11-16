@@ -90,6 +90,34 @@ def main() -> None:
     p_mcp = subparsers.add_parser("mcp", help="Start the Model Context Protocol (MCP) stdio tool server for AI coding agents.")
     p_mcp.add_argument("--root", default=".", help="Root directory path.")
 
+    # Merge
+    p_merge = subparsers.add_parser("merge", help="Merge another branch into current branch with 3-way DAG analysis.")
+    p_merge.add_argument("source_branch", help="Source branch to merge into current branch.")
+    p_merge.add_argument("--into", default=None, help="Target branch (defaults to current branch).")
+    p_merge.add_argument("--abort-on-conflict", action="store_true", help="Abort and revert workspace if conflicts occur.")
+    p_merge.add_argument("--root", default=".", help="Root directory path.")
+
+    # Patch Export
+    p_patch = subparsers.add_parser("patch", help="Export unified diff patch between checkpoints.")
+    p_patch.add_argument("from_checkpoint", help="Baseline checkpoint ID, tag, or 'HEAD'.")
+    p_patch.add_argument("to_checkpoint", nargs="?", default=None, help="Target checkpoint ID or live workspace.")
+    p_patch.add_argument("-o", "--output", default=None, help="Output file path (prints to stdout if omitted).")
+    p_patch.add_argument("--root", default=".", help="Root directory path.")
+
+    # Apply Patch
+    p_app_patch = subparsers.add_parser("apply-patch", help="Apply a unified diff patch to live workspace.")
+    p_app_patch.add_argument("patch_file", help="Path to unified diff patch file.")
+    p_app_patch.add_argument("--dry-run", action="store_true", help="Simulate patch application without modifying disk.")
+    p_app_patch.add_argument("--root", default=".", help="Root directory path.")
+
+    # Git Sync
+    p_git = subparsers.add_parser("git-sync", help="Synchronize rollback checkpoints with local Git commits.")
+    p_git.add_argument("action", choices=["status", "export", "import"], help="Git bridge action.")
+    p_git.add_argument("--branch", default=None, help="Rollback branch to export.")
+    p_git.add_argument("--git-branch", default=None, help="Git branch to export onto.")
+    p_git.add_argument("--max-commits", type=int, default=10, help="Max Git commits to import.")
+    p_git.add_argument("--root", default=".", help="Root directory path.")
+
     args = parser.parse_args()
     session = RollbackSession(root_dir=args.root)
 
@@ -246,6 +274,76 @@ def main() -> None:
         from .mcp_server import RollbackMCPServer
         server = RollbackMCPServer(root_dir=args.root)
         server.run_stdio()
+
+    elif args.command == "merge":
+        try:
+            res = session.merge_branch(
+                args.source_branch,
+                target_branch=args.into,
+                abort_on_conflict=args.abort_on_conflict,
+            )
+            print(f"Merge Status: {res.status.upper()}")
+            print(f"Message: {res.message}")
+            if res.merged_files:
+                print(f"Merged files ({len(res.merged_files)}): {', '.join(res.merged_files)}")
+            if res.conflicting_files:
+                print(f"Conflicts ({len(res.conflicting_files)}): {', '.join(res.conflicting_files)}")
+            if res.has_conflicts:
+                sys.exit(1)
+        except Exception as e:
+            print(f"Merge failed: {e}")
+            sys.exit(1)
+
+    elif args.command == "patch":
+        from .patch import export_patch
+        try:
+            txt = export_patch(
+                session,
+                args.from_checkpoint,
+                to_checkpoint=args.to_checkpoint,
+                output_file=args.output,
+            )
+            if args.output:
+                print(f"Exported patch to {args.output} ({len(txt)} bytes)")
+            else:
+                print(txt)
+        except Exception as e:
+            print(f"Patch export failed: {e}")
+            sys.exit(1)
+
+    elif args.command == "apply-patch":
+        from .patch import apply_patch
+        try:
+            res = apply_patch(session, args.patch_file, dry_run=args.dry_run)
+            if res.status == "failed":
+                print(f"Patch apply failed: {res.message}")
+                for fh in res.failed_hunks:
+                    print(f"  {fh['file']}: {fh['error']}")
+                sys.exit(1)
+            else:
+                print(res.message)
+                if res.files_affected:
+                    print(f"Files affected: {', '.join(res.files_affected)}")
+        except Exception as e:
+            print(f"Apply patch failed: {e}")
+            sys.exit(1)
+
+    elif args.command == "git-sync":
+        from .git_bridge import GitBridge
+        bridge = GitBridge(session)
+        if args.action == "status":
+            st = bridge.get_status()
+            print("Git Bridge Status:")
+            print(f"  Is Git Repo: {st.is_git_repo}")
+            print(f"  Git Branch: {st.git_branch} (HEAD: {st.git_head[:8] if st.git_head else 'none'})")
+            print(f"  Rollback Branch: {st.rollback_branch} (HEAD: {st.rollback_head[:8] if st.rollback_head else 'none'})")
+            print(f"  Dirty Files: {len(st.dirty_files)}")
+        elif args.action == "export":
+            res = bridge.export_to_git(branch=args.branch, git_branch=args.git_branch)
+            print(res["message"])
+        elif args.action == "import":
+            cids = bridge.import_from_git(max_commits=args.max_commits)
+            print(f"Imported {len(cids)} commit(s) into rollback checkpoints.")
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert init_resp is not None
         assert init_resp["id"] == 1
         assert init_resp["result"]["serverInfo"]["name"] == "rollback-engine"
-        assert init_resp["result"]["serverInfo"]["version"] == "0.4.0"
+        assert init_resp["result"]["serverInfo"]["version"] == "0.5.0"
 
         # 2. Ping
         ping_resp = server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "ping"})
@@ -40,6 +40,9 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert "rollback_security_check" in tool_names
         assert "rollback_status" in tool_names
         assert "rollback_report" in tool_names
+        assert "rollback_merge" in tool_names
+        assert "rollback_patch" in tool_names
+        assert "rollback_git_sync" in tool_names
 
         # 4. Create snapshot tool call
         (Path(tmpdir) / "test.txt").write_text("hello mcp")
@@ -108,3 +111,34 @@ def test_mcp_server_protocol_lifecycle() -> None:
         revert_data = json.loads(revert_resp["result"]["content"][0]["text"])
         assert revert_data["status"] == "success"
         assert (Path(tmpdir) / "test.txt").read_text() == "hello mcp"
+
+        # 8. Git sync status tool call
+        git_req = {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_git_sync",
+                "arguments": {"action": "status"},
+            },
+        }
+        git_resp = server.handle_request(git_req)
+        assert git_resp is not None
+        git_data = json.loads(git_resp["result"]["content"][0]["text"])
+        assert "is_git_repo" in git_data
+
+        # 9. Patch export tool call
+        patch_req = {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_patch",
+                "arguments": {"action": "export", "from_checkpoint": cp_id},
+            },
+        }
+        patch_resp = server.handle_request(patch_req)
+        assert patch_resp is not None
+        patch_data = json.loads(patch_resp["result"]["content"][0]["text"])
+        assert patch_data["status"] == "success"
+        assert patch_data["action"] == "export"
