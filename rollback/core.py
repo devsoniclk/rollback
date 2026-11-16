@@ -104,6 +104,16 @@ class RollbackSession:
         self._load_tags()
         self._load_branches()
 
+    @property
+    def workspace_dir(self) -> Path:
+        """Alias for root directory."""
+        return self.root
+
+    @property
+    def rollback_dir(self) -> Path:
+        """Alias for journal directory."""
+        return self.journal_dir
+
     def _should_ignore(self, rel_path: Path) -> bool:
         parts = rel_path.parts
         for part in parts:
@@ -638,6 +648,56 @@ class RollbackSession:
             dry_run=dry_run,
             on_step=on_step,
         )
+
+    def heal(
+        self,
+        command: Union[str, List[str]],
+        cwd: Optional[Union[str, Path]] = None,
+        auto_revert: bool = True,
+        timeout_seconds: float = 120.0,
+        env: Optional[Dict[str, str]] = None,
+        checkpoint_message: Optional[str] = None,
+        baseline_checkpoint_id: Optional[str] = None,
+    ) -> Any:
+        """Executes a command under auto-heal watchdog; reverts workspace if command fails."""
+        from .healer import AutoHealer
+        healer = AutoHealer(self)
+        return healer.run_guarded(
+            command=command,
+            cwd=cwd,
+            auto_revert=auto_revert,
+            timeout_seconds=timeout_seconds,
+            env=env,
+            checkpoint_message=checkpoint_message,
+            baseline_checkpoint_id=baseline_checkpoint_id,
+        )
+
+    def speculative_sandbox(self) -> Any:
+        """Opens an in-memory copy-on-write overlay sandbox atop this session."""
+        from .sandbox import SpeculativeSandbox
+        return SpeculativeSandbox(self)
+
+    @property
+    def lease_manager(self) -> Any:
+        """Returns the multi-agent workspace lease coordinator."""
+        from .lease import WorkspaceLeaseManager
+        return WorkspaceLeaseManager(self)
+
+    def acquire_lease(
+        self,
+        agent_id: str,
+        paths: List[Union[str, Path]],
+        mode: str = "exclusive",
+        ttl_seconds: float = 300.0,
+    ) -> Any:
+        """Acquires a multi-agent file lease."""
+        return self.lease_manager.acquire(
+            agent_id=agent_id, paths=paths, mode=mode, ttl_seconds=ttl_seconds
+        )
+
+    def release_lease(self, token: str) -> bool:
+        """Releases a multi-agent file lease."""
+        return self.lease_manager.release(token)
 
     def _load_history(self) -> None:
         hist_path = self.journal_dir / "history.json"

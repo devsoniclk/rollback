@@ -139,6 +139,26 @@ def main() -> None:
     p_drift.add_argument("--json", action="store_true", help="Output drift report in JSON format.")
     p_drift.add_argument("--root", default=".", help="Root directory path.")
 
+    # Auto-Healer
+    p_heal = subparsers.add_parser("heal", help="Run a command under auto-heal watchdog with automatic rollback on failure.")
+    p_heal.add_argument("cmd", help="Command string to execute under watchdog guard.")
+    p_heal.add_argument("--no-revert", action="store_true", help="Do not revert automatically on failure.")
+    p_heal.add_argument("--timeout", type=float, default=120.0, help="Execution timeout in seconds.")
+    p_heal.add_argument("--json", action="store_true", help="Output healing report in JSON format.")
+    p_heal.add_argument("--root", default=".", help="Root directory path.")
+
+    # Multi-Agent Lease
+    p_lease = subparsers.add_parser("lease", help="Manage multi-agent workspace leases.")
+    p_lease.add_argument("action", choices=["acquire", "release", "list", "revoke"], help="Lease operation.")
+    p_lease.add_argument("--agent", default="agent-cli", help="Agent identifier for acquire.")
+    p_lease.add_argument("--paths", nargs="+", help="Paths to lease.")
+    p_lease.add_argument("--mode", choices=["exclusive", "shared"], default="exclusive", help="Lease mode.")
+    p_lease.add_argument("--ttl", type=float, default=300.0, help="Lease TTL in seconds.")
+    p_lease.add_argument("--token", help="Lease secret token for release.")
+    p_lease.add_argument("--lease-id", help="Lease ID for revocation.")
+    p_lease.add_argument("--json", action="store_true", help="Output in JSON format.")
+    p_lease.add_argument("--root", default=".", help="Root directory path.")
+
 
     args = parser.parse_args()
     session = RollbackSession(root_dir=args.root)
@@ -434,6 +454,77 @@ def main() -> None:
                     print("\nChanged Files:")
                     for f in rep.files:
                         print(f"  - [{f.status.upper()}] {f.path} (delta {f.size_delta:+d} bytes)")
+
+    elif args.command == "heal":
+        import json
+        try:
+            report = session.heal(
+                command=args.cmd,
+                auto_revert=not args.no_revert,
+                timeout_seconds=args.timeout,
+            )
+            if args.json:
+                print(json.dumps(report.to_dict(), indent=2))
+            else:
+                if report.success:
+                    print(f"Auto-Heal Check [PASSED]: Command succeeded in {report.duration_ms:.1f}ms")
+                else:
+                    action_str = "REVERTED TO PRE-SAVEPOINT" if report.reverted else "NOT REVERTED"
+                    print(f"Auto-Heal Triggered [{report.failure_type}] -> {action_str}")
+                    print(f"  Diagnosis: {report.summary}")
+                    if report.failing_files:
+                        print(f"  Failing files: {', '.join(report.failing_files)}")
+                    if report.quarantine_path:
+                        print(f"  Incident log: {report.quarantine_path}")
+                    if not report.success:
+                        sys.exit(report.exit_code or 1)
+        except Exception as e:
+            print(f"Auto-heal execution error: {e}")
+            sys.exit(1)
+
+    elif args.command == "lease":
+        import json
+        lm = session.lease_manager
+        try:
+            if args.action == "acquire":
+                if not args.paths:
+                    print("Error: --paths required for lease acquire.")
+                    sys.exit(1)
+                lease = lm.acquire(
+                    agent_id=args.agent,
+                    paths=args.paths,
+                    mode=args.mode,
+                    ttl_seconds=args.ttl,
+                )
+                if args.json:
+                    print(json.dumps(lease.to_dict(include_token=True), indent=2))
+                else:
+                    print(f"Acquired {lease.mode} lease {lease.lease_id} for agent '{lease.agent_id}'")
+                    print(f"  Paths: {', '.join(lease.paths)}")
+                    print(f"  TTL: {lease.remaining_seconds:.0f}s (Token: {lease.token})")
+            elif args.action == "release":
+                if not args.token:
+                    print("Error: --token required for lease release.")
+                    sys.exit(1)
+                ok = lm.release(args.token)
+                print("Lease released successfully." if ok else "Lease token not found.")
+            elif args.action == "list":
+                leases = lm.list_active()
+                if args.json:
+                    print(json.dumps([l.to_dict() for l in leases], indent=2))
+                else:
+                    print(f"Active Workspace Leases ({len(leases)}):")
+                    for l in leases:
+                        print(f"  - [{l.mode.upper()}] {l.lease_id} (Agent: {l.agent_id}, TTL: {l.remaining_seconds:.0f}s, Paths: {len(l.paths)})")
+            elif args.action == "revoke":
+                if not args.lease_id:
+                    print("Error: --lease-id required for lease revoke.")
+                    sys.exit(1)
+                ok = lm.revoke(args.lease_id)
+                print("Lease revoked successfully." if ok else "Lease ID not found.")
+        except Exception as e:
+            print(f"Lease error: {e}")
+            sys.exit(1)
 
 
 

@@ -296,6 +296,103 @@ class RollbackMCPServer:
                     },
                 },
             },
+            {
+                "name": "rollback_auto_heal",
+                "description": "Execute command or test suite under auto-heal watchdog; automatically rolls back workspace to green state on failure and generates structured diagnosis.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "Shell command line to execute under watchdog guard.",
+                        },
+                        "auto_revert": {
+                            "type": "boolean",
+                            "description": "Whether to revert to pre-checkpoint automatically if command fails.",
+                            "default": True,
+                        },
+                        "timeout_seconds": {
+                            "type": "number",
+                            "description": "Maximum execution time before timeout failure.",
+                            "default": 120.0,
+                        },
+                    },
+                    "required": ["command"],
+                },
+            },
+            {
+                "name": "rollback_speculative_sandbox",
+                "description": "Stage speculative file writes and deletions in memory overlay, validate AST/syntax integrity, and commit or discard.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["stage", "commit", "discard"],
+                            "description": "Action to perform: 'stage' (write/delete in overlay), 'commit' (flush to disk), or 'discard'.",
+                        },
+                        "writes": {
+                            "type": "object",
+                            "description": "Dictionary of relative paths to text contents to stage or commit.",
+                        },
+                        "deletes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of relative paths to stage for deletion.",
+                        },
+                        "validate_first": {
+                            "type": "boolean",
+                            "description": "Whether to enforce AST/syntax integrity validation before committing.",
+                            "default": True,
+                        },
+                    },
+                    "required": ["action"],
+                },
+            },
+            {
+                "name": "rollback_acquire_lease",
+                "description": "Acquire an exclusive (write) or shared (read) path lease with TTL for multi-agent swarm concurrency control.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Unique identifier of the requesting AI agent.",
+                        },
+                        "paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Workspace paths to lock.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["exclusive", "shared"],
+                            "description": "Locking mode: 'exclusive' (write lock) or 'shared' (read lock).",
+                            "default": "exclusive",
+                        },
+                        "ttl_seconds": {
+                            "type": "number",
+                            "description": "Time to live in seconds before lease automatically expires.",
+                            "default": 300.0,
+                        },
+                    },
+                    "required": ["agent_id", "paths"],
+                },
+            },
+            {
+                "name": "rollback_release_lease",
+                "description": "Release an active multi-agent path lease using its secret token.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "token": {
+                            "type": "string",
+                            "description": "Secret token returned when acquiring the lease.",
+                        },
+                    },
+                    "required": ["token"],
+                },
+            },
         ]
 
     def execute_tool(self, name: str, args: Dict[str, Any]) -> str:
@@ -502,6 +599,73 @@ class RollbackMCPServer:
             drift = self.session.scan_drift(paths=paths)
             return json.dumps(drift.to_dict(), indent=2)
 
+        elif name == "rollback_auto_heal":
+            command = args.get("command")
+            if not command:
+                raise ValueError("'command' argument is required for rollback_auto_heal.")
+            auto_revert = bool(args.get("auto_revert", True))
+            timeout_s = float(args.get("timeout_seconds", 120.0))
+            rep = self.session.heal(command, auto_revert=auto_revert, timeout_seconds=timeout_s)
+            return json.dumps(rep.to_dict(), indent=2)
+
+        elif name == "rollback_speculative_sandbox":
+            action = args.get("action", "commit")
+            writes = args.get("writes") or {}
+            deletes = args.get("deletes") or []
+            validate_first = bool(args.get("validate_first", True))
+            sandbox = self.session.speculative_sandbox()
+            for path, content in writes.items():
+                sandbox.write_file(path, content)
+            for path in deletes:
+                sandbox.delete_file(path)
+
+            if action == "stage":
+                staged = sandbox.list_staged()
+                return json.dumps({
+                    "status": "success",
+                    "action": "stage",
+                    "staged_files": staged,
+                }, indent=2)
+            elif action == "discard":
+                sandbox.discard()
+                return json.dumps({
+                    "status": "success",
+                    "action": "discard",
+                    "staged_files": {},
+                }, indent=2)
+            elif action == "commit":
+                res = sandbox.commit(create_checkpoint=True, validate_first=validate_first)
+                return json.dumps({
+                    "status": "success",
+                    "action": "commit",
+                    **res.to_dict(),
+                }, indent=2)
+            else:
+                raise ValueError(f"Unknown sandbox action: {action}")
+
+        elif name == "rollback_acquire_lease":
+            agent_id = args.get("agent_id")
+            paths = args.get("paths", [])
+            mode = args.get("mode", "exclusive")
+            ttl_s = float(args.get("ttl_seconds", 300.0))
+            if not agent_id or not paths:
+                raise ValueError("'agent_id' and 'paths' are required for rollback_acquire_lease.")
+            lease = self.session.acquire_lease(agent_id=agent_id, paths=paths, mode=mode, ttl_seconds=ttl_s)
+            return json.dumps({
+                "status": "success",
+                "lease": lease.to_dict(include_token=True),
+            }, indent=2)
+
+        elif name == "rollback_release_lease":
+            token = args.get("token")
+            if not token:
+                raise ValueError("'token' argument is required for rollback_release_lease.")
+            released = self.session.release_lease(token)
+            return json.dumps({
+                "status": "success" if released else "not_found",
+                "released": released,
+            }, indent=2)
+
         raise ValueError(f"Unknown tool: {name}")
 
     def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -516,7 +680,7 @@ class RollbackMCPServer:
                     "protocolVersion": self.PROTOCOL_VERSION,
                     "serverInfo": {
                         "name": "rollback-engine",
-                        "version": "0.6.0",
+                        "version": "0.7.0",
                     },
                     "capabilities": {
                         "tools": {},

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 from pathlib import Path
 from rollback.mcp_server import RollbackMCPServer
@@ -21,7 +22,7 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert init_resp is not None
         assert init_resp["id"] == 1
         assert init_resp["result"]["serverInfo"]["name"] == "rollback-engine"
-        assert init_resp["result"]["serverInfo"]["version"] == "0.6.0"
+        assert init_resp["result"]["serverInfo"]["version"] == "0.7.0"
 
         # 2. Ping
         ping_resp = server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "ping"})
@@ -46,7 +47,11 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert "rollback_revert_file" in tool_names
         assert "rollback_check_integrity" in tool_names
         assert "rollback_scan_drift" in tool_names
-        assert len(tool_names) == 14
+        assert "rollback_auto_heal" in tool_names
+        assert "rollback_speculative_sandbox" in tool_names
+        assert "rollback_acquire_lease" in tool_names
+        assert "rollback_release_lease" in tool_names
+        assert len(tool_names) == 18
 
         # 4. Create snapshot tool call
         (Path(tmpdir) / "test.txt").write_text("hello mcp")
@@ -194,3 +199,75 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert sel_data["status"] == "success"
         assert (Path(tmpdir) / "test.txt").read_text() == "hello mcp"
 
+        # 13. Auto-Heal tool call
+        heal_req = {
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_auto_heal",
+                "arguments": {
+                    "command": f"{sys.executable} -c 'import sys; sys.exit(0)'",
+                    "auto_revert": True,
+                },
+            },
+        }
+        heal_resp = server.handle_request(heal_req)
+        assert heal_resp is not None
+        heal_data = json.loads(heal_resp["result"]["content"][0]["text"])
+        assert heal_data["success"] is True
+
+        # 14. Speculative sandbox tool call
+        sb_req = {
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_speculative_sandbox",
+                "arguments": {
+                    "action": "commit",
+                    "writes": {"sandboxed.py": "x = 42\n"},
+                },
+            },
+        }
+        sb_resp = server.handle_request(sb_req)
+        assert sb_resp is not None
+        sb_data = json.loads(sb_resp["result"]["content"][0]["text"])
+        assert sb_data["status"] == "success"
+        assert (Path(tmpdir) / "sandboxed.py").exists()
+
+        # 15. Lease acquire and release tool calls
+        lease_req = {
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_acquire_lease",
+                "arguments": {
+                    "agent_id": "test-agent",
+                    "paths": ["sandboxed.py"],
+                    "mode": "exclusive",
+                    "ttl_seconds": 60,
+                },
+            },
+        }
+        lease_resp = server.handle_request(lease_req)
+        assert lease_resp is not None
+        lease_data = json.loads(lease_resp["result"]["content"][0]["text"])
+        assert lease_data["status"] == "success"
+        token = lease_data["lease"]["token"]
+
+        rel_req = {
+            "jsonrpc": "2.0",
+            "id": 16,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_release_lease",
+                "arguments": {"token": token},
+            },
+        }
+        rel_resp = server.handle_request(rel_req)
+        assert rel_resp is not None
+        rel_data = json.loads(rel_resp["result"]["content"][0]["text"])
+        assert rel_data["status"] == "success"
+        assert rel_data["released"] is True

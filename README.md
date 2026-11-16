@@ -5,7 +5,7 @@
 [![CI](https://github.com/devsoniclk/rollback/actions/workflows/ci.yml/badge.svg)](https://github.com/devsoniclk/rollback/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/rollback-engine/)
-[![Version](https://img.shields.io/badge/version-v0.6.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.6.0)
+[![Version](https://img.shields.io/badge/version-v0.7.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.7.0)
 
 ---
 
@@ -18,7 +18,10 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Mock-only libraries**: Merely record tool intentions without supporting live transactional execution or physical disk rollbacks.
 
 ## 3. What `rollback` Does Differently
-`rollback` provides **in-process transactional savepoints, workspace security boundaries, micro-checkpoints (<2ms), time-travel replay, precision selective reverts, multi-language syntax gates, and native Model Context Protocol (MCP) tools** with zero external daemons:
+`rollback` provides **in-process transactional savepoints, automated self-healing execution watchdogs, copy-on-write speculative overlay sandboxes, multi-agent workspace leases, workspace security boundaries, micro-checkpoints (<2ms), time-travel replay, precision selective reverts, multi-language syntax gates, and native Model Context Protocol (MCP) tools** with zero external daemons:
+- **Automated Self-Healing Watchdog (`AutoHealer`)**: Wraps test suites and bash execution with pre-savepoint guards. Automatically classifies breakages (`SYNTAX_ERROR`, `ASSERTION_ERROR`, `IMPORT_ERROR`, `TYPE_ERROR`, `TIMEOUT_ERROR`), restores green checkpoints, isolates broken diffs into forensic incident quarantine logs, and generates structured LLM refinement prompts.
+- **In-Memory Speculative Overlay Sandbox (`SpeculativeSandbox`)**: Copy-on-Write overlay mounted atop workspace disks allowing agents to stage speculative multi-file refactors, validate AST integrity, and commit or discard without premature disk I/O.
+- **Multi-Agent Workspace Lease & Concurrency Coordinator (`WorkspaceLeaseManager`)**: File-level shared (read) and exclusive (write) leases with TTLs, heartbeat renewal, and conflict detection preventing overlapping edits across agent swarms.
 - **Workspace Security Containment**: Defends against path traversal attacks (`../`), symlink directory escapes, and unauthorized edits to sensitive files (`.env`, `*.key`, `*.pem`, `id_rsa*`).
 - **Precision Selective Revert & Cherry-Pick**: Revert individual target files to prior checkpoints or import files across branches without rolling back the whole workspace.
 - **Code Syntax & Structural Integrity Gate**: Built-in multi-language AST/parser linters (Python AST, JSON, YAML, TOML, JS/TS bracket balancing, Markdown fences) protecting checkpoints from broken code.
@@ -31,7 +34,7 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Dry-Run Revert Planning**: Inspect `RevertPlan` to verify exactly which files will be restored, deleted, or resurrected before modifying disk.
 - **Deterministic Time-Travel Replay**: Step-by-step playback with cryptographic SHA-256 integrity verification across checkpoint histories and branches.
 - **Interactive Dark-Mode HTML Dossier**: Dependency-free standalone HTML visualizer with embedded responsive SVG checkpoint DAG, file deltas, and security audit tables.
-- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server (14 tools) for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
+- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server (18 tools) for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
 - **Timeline Branching**: Explore multiple agent solution hypotheses in parallel with lightweight `branch` and `checkout` without git conflicts.
 - **Portable Bundle Archiving**: Export/import complete sessions as `.rbk.tar.gz` bundles for cross-environment agent migration (Fly.io, Docker, E2B, Modal).
 - **Async & Sync Agent Tooling**: Native support for synchronous and `async def` agent tool loops (LangChain, AutoGen, CrewAI, MCP tools).
@@ -40,6 +43,9 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 ---
 
 ## 4. Key Features
+- **Auto-Healing Execution Watchdog**: `session.heal(cmd, auto_revert=True)` and `rollback heal <cmd>`.
+- **In-Memory Speculative Sandbox**: `with session.speculative_sandbox() as sb: ...`
+- **Multi-Agent Workspace Leases**: `session.acquire_lease("agent-1", ["core.py"])` and `session.release_lease(token)`.
 - **Selective File Revert**: `session.revert_file(cid, path)` and `session.cherry_pick(cid, [paths])`.
 - **Syntax Integrity Gate**: `session.check_integrity()` verifying Python, JSON, YAML, TOML, JS/TS.
 - **Workspace Sentinel**: `session.scan_drift()` and `session.auto_checkpoint(min_changes=1)`.

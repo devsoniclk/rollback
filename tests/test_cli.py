@@ -229,3 +229,35 @@ def test_cli_lifecycle(workspace):
     assert "Selective Revert successful" in res_rev_file.stdout
     assert f.read_text() == "v1\n"
 
+    # 16. Heal CLI
+    res_heal = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "heal", f"{sys.executable} -c 'import sys; sys.exit(0)'", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_heal.returncode == 0
+    assert "Auto-Heal Check [PASSED]" in res_heal.stdout
+
+    # 17. Lease CLI
+    res_lease = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "lease", "acquire", "--agent", "cli-agent", "--paths", "test.txt", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_lease.returncode == 0
+    assert "Acquired exclusive lease" in res_lease.stdout
+
+    res_lease_list = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "lease", "list", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_lease_list.returncode == 0
+    assert "Active Workspace Leases (1)" in res_lease_list.stdout
+
