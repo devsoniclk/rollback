@@ -239,6 +239,63 @@ class RollbackMCPServer:
                     "required": ["action"],
                 },
             },
+            {
+                "name": "rollback_revert_file",
+                "description": "Selectively revert specific files to their state at a target checkpoint without rolling back the whole workspace.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "checkpoint_id": {
+                            "type": "string",
+                            "description": "Target checkpoint ID or tag alias.",
+                        },
+                        "paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of file paths to selectively revert.",
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Simulate selective revert without modifying disk.",
+                            "default": False,
+                        },
+                    },
+                    "required": ["checkpoint_id", "paths"],
+                },
+            },
+            {
+                "name": "rollback_check_integrity",
+                "description": "Audit Python, JSON, YAML, TOML, and JS/TS code syntax and structural integrity across workspace.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional specific file paths to audit (defaults to entire workspace).",
+                        },
+                        "strict": {
+                            "type": "boolean",
+                            "description": "Fail immediately on any syntax errors.",
+                            "default": False,
+                        },
+                    },
+                },
+            },
+            {
+                "name": "rollback_scan_drift",
+                "description": "Scan uncommitted workspace file drift, modified bytes, and dirty status against HEAD checkpoint.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional file path filter.",
+                        },
+                    },
+                },
+            },
         ]
 
     def execute_tool(self, name: str, args: Dict[str, Any]) -> str:
@@ -425,6 +482,26 @@ class RollbackMCPServer:
             else:
                 raise ValueError(f"Unknown git_sync action: {action}")
 
+        elif name == "rollback_revert_file":
+            cid = args.get("checkpoint_id")
+            paths = args.get("paths", [])
+            dry_run = bool(args.get("dry_run", False))
+            if not cid or not paths:
+                raise ValueError("'checkpoint_id' and 'paths' are required for rollback_revert_file.")
+            res = self.session.revert_files(checkpoint_id=cid, paths=paths, dry_run=dry_run)
+            return json.dumps(res, indent=2)
+
+        elif name == "rollback_check_integrity":
+            paths = args.get("paths")
+            strict = bool(args.get("strict", False))
+            report = self.session.check_integrity(paths=paths, strict=strict)
+            return json.dumps(report.to_dict(), indent=2)
+
+        elif name == "rollback_scan_drift":
+            paths = args.get("paths")
+            drift = self.session.scan_drift(paths=paths)
+            return json.dumps(drift.to_dict(), indent=2)
+
         raise ValueError(f"Unknown tool: {name}")
 
     def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -439,7 +516,7 @@ class RollbackMCPServer:
                     "protocolVersion": self.PROTOCOL_VERSION,
                     "serverInfo": {
                         "name": "rollback-engine",
-                        "version": "0.5.0",
+                        "version": "0.6.0",
                     },
                     "capabilities": {
                         "tools": {},

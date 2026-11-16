@@ -550,6 +550,78 @@ class RollbackSession:
         from .html_report import render_html_report
         return render_html_report(self, output_path=output_path, title=title)
 
+    def revert_file(
+        self,
+        checkpoint_id: str,
+        path: Union[str, Path],
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Selectively reverts a single file to its state at a target checkpoint."""
+        return self.revert_files(checkpoint_id, [path], dry_run=dry_run)
+
+    def revert_files(
+        self,
+        checkpoint_id: str,
+        paths: List[Union[str, Path]],
+        dry_run: bool = False,
+        backup_checkpoint: bool = True,
+    ) -> Dict[str, Any]:
+        """Selectively reverts multiple files to their states at a target checkpoint."""
+        from .selective import SelectiveRevertEngine
+        engine = SelectiveRevertEngine(self)
+        return engine.revert_files(
+            checkpoint_id=checkpoint_id,
+            file_paths=paths,
+            dry_run=dry_run,
+            backup_checkpoint=backup_checkpoint,
+        )
+
+    def cherry_pick(
+        self,
+        source_checkpoint_id: str,
+        paths: List[Union[str, Path]],
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Imports specific file versions from an alternate checkpoint/branch into current workspace."""
+        from .selective import SelectiveRevertEngine
+        engine = SelectiveRevertEngine(self)
+        return engine.cherry_pick_files(
+            source_checkpoint_id=source_checkpoint_id,
+            file_paths=paths,
+            dry_run=dry_run,
+        )
+
+    def check_integrity(
+        self,
+        paths: Optional[List[Union[str, Path]]] = None,
+        strict: bool = False,
+    ) -> Any:
+        """Audits workspace files for syntax and structural integrity."""
+        from .integrity import IntegrityGate
+        return IntegrityGate.check_workspace(
+            root_dir=self.root,
+            paths=paths,
+            ignores=self.ignores,
+            strict=strict,
+        )
+
+    def scan_drift(self, paths: Optional[List[str]] = None) -> Any:
+        """Scans uncommitted workspace drift against the HEAD checkpoint."""
+        from .sentinel import WorkspaceSentinel
+        sentinel = WorkspaceSentinel(self)
+        return sentinel.scan_drift(paths=paths)
+
+    def auto_checkpoint(
+        self,
+        trigger_label: str = "sentinel_auto",
+        min_changes: int = 1,
+        tag: Optional[str] = None,
+    ) -> Optional[Checkpoint]:
+        """Creates an automated checkpoint if observed workspace drift exceeds min_changes."""
+        from .sentinel import WorkspaceSentinel
+        sentinel = WorkspaceSentinel(self)
+        return sentinel.auto_checkpoint(trigger_label=trigger_label, min_changes=min_changes, tag=tag)
+
     def replay(
         self,
         target_identifier: str,

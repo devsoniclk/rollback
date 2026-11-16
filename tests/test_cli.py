@@ -193,3 +193,39 @@ def test_cli_lifecycle(workspace):
     )
     assert res_git.returncode == 0
     assert "Git Bridge Status:" in res_git.stdout
+
+    # 13. Drift CLI
+    res_drift = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "drift", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_drift.returncode == 0
+    assert "Workspace Sentinel Drift" in res_drift.stdout
+
+    # 14. Integrity CLI
+    res_integ = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "integrity", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_integ.returncode == 0
+    assert "Integrity Audit" in res_integ.stdout
+
+    # 15. Revert-File CLI
+    f.write_text("v3 modified before selective revert\n")
+    res_rev_file = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "revert-file", "stable_v1", "test.txt", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_rev_file.returncode == 0
+    assert "Selective Revert successful" in res_rev_file.stdout
+    assert f.read_text() == "v1\n"
+

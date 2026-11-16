@@ -21,7 +21,7 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert init_resp is not None
         assert init_resp["id"] == 1
         assert init_resp["result"]["serverInfo"]["name"] == "rollback-engine"
-        assert init_resp["result"]["serverInfo"]["version"] == "0.5.0"
+        assert init_resp["result"]["serverInfo"]["version"] == "0.6.0"
 
         # 2. Ping
         ping_resp = server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "ping"})
@@ -43,6 +43,10 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert "rollback_merge" in tool_names
         assert "rollback_patch" in tool_names
         assert "rollback_git_sync" in tool_names
+        assert "rollback_revert_file" in tool_names
+        assert "rollback_check_integrity" in tool_names
+        assert "rollback_scan_drift" in tool_names
+        assert len(tool_names) == 14
 
         # 4. Create snapshot tool call
         (Path(tmpdir) / "test.txt").write_text("hello mcp")
@@ -142,3 +146,51 @@ def test_mcp_server_protocol_lifecycle() -> None:
         patch_data = json.loads(patch_resp["result"]["content"][0]["text"])
         assert patch_data["status"] == "success"
         assert patch_data["action"] == "export"
+
+        # 10. Drift tool call
+        drift_req = {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_scan_drift",
+                "arguments": {},
+            },
+        }
+        drift_resp = server.handle_request(drift_req)
+        assert drift_resp is not None
+        drift_data = json.loads(drift_resp["result"]["content"][0]["text"])
+        assert "is_dirty" in drift_data
+
+        # 11. Integrity tool call
+        integ_req = {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_check_integrity",
+                "arguments": {},
+            },
+        }
+        integ_resp = server.handle_request(integ_req)
+        assert integ_resp is not None
+        integ_data = json.loads(integ_resp["result"]["content"][0]["text"])
+        assert "is_clean" in integ_data
+
+        # 12. Selective revert tool call
+        (Path(tmpdir) / "test.txt").write_text("another mutation")
+        sel_req = {
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_revert_file",
+                "arguments": {"checkpoint_id": cp_id, "paths": ["test.txt"], "dry_run": False},
+            },
+        }
+        sel_resp = server.handle_request(sel_req)
+        assert sel_resp is not None
+        sel_data = json.loads(sel_resp["result"]["content"][0]["text"])
+        assert sel_data["status"] == "success"
+        assert (Path(tmpdir) / "test.txt").read_text() == "hello mcp"
+

@@ -5,7 +5,7 @@
 [![CI](https://github.com/devsoniclk/rollback/actions/workflows/ci.yml/badge.svg)](https://github.com/devsoniclk/rollback/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/rollback-engine/)
-[![Version](https://img.shields.io/badge/version-v0.5.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.5.0)
+[![Version](https://img.shields.io/badge/version-v0.6.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.6.0)
 
 ---
 
@@ -18,14 +18,20 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Mock-only libraries**: Merely record tool intentions without supporting live transactional execution or physical disk rollbacks.
 
 ## 3. What `rollback` Does Differently
-`rollback` provides **in-process transactional savepoints, workspace security boundaries, micro-checkpoints (<2ms), time-travel replay, and native Model Context Protocol (MCP) tools** with zero external daemons:
+`rollback` provides **in-process transactional savepoints, workspace security boundaries, micro-checkpoints (<2ms), time-travel replay, precision selective reverts, multi-language syntax gates, and native Model Context Protocol (MCP) tools** with zero external daemons:
 - **Workspace Security Containment**: Defends against path traversal attacks (`../`), symlink directory escapes, and unauthorized edits to sensitive files (`.env`, `*.key`, `*.pem`, `id_rsa*`).
+- **Precision Selective Revert & Cherry-Pick**: Revert individual target files to prior checkpoints or import files across branches without rolling back the whole workspace.
+- **Code Syntax & Structural Integrity Gate**: Built-in multi-language AST/parser linters (Python AST, JSON, YAML, TOML, JS/TS bracket balancing, Markdown fences) protecting checkpoints from broken code.
+- **Continuous Workspace Sentinel & Drift Watchdog**: High-frequency dirty status detection, byte-level delta auditing, drift ratio scoring, and proactive auto-checkpointing.
+- **3-Way DAG Branch Merging**: Merge diverging hypothesis branches with automatic Lowest Common Ancestor (LCA) detection and deterministic conflict markers (`<<<<<<< HEAD`).
+- **Git Bidirectional Bridge**: Export micro-checkpoints to real Git commits with co-author trailers, and import Git history into rollback tagged checkpoints.
+- **Standard Unified Diff Patch Engine**: Export standard patch files between checkpoints or live workspace, and atomically apply patches with dry-run verification.
 - **Microsecond Checkpoints**: Fast content-hashed delta snapshots before each tool call.
 - **Atomic POSIX Revert**: Restores modified files, cleans up rogue newly-created files, and resurrects deleted files atomically using `os.replace`.
 - **Dry-Run Revert Planning**: Inspect `RevertPlan` to verify exactly which files will be restored, deleted, or resurrected before modifying disk.
 - **Deterministic Time-Travel Replay**: Step-by-step playback with cryptographic SHA-256 integrity verification across checkpoint histories and branches.
 - **Interactive Dark-Mode HTML Dossier**: Dependency-free standalone HTML visualizer with embedded responsive SVG checkpoint DAG, file deltas, and security audit tables.
-- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
+- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server (14 tools) for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
 - **Timeline Branching**: Explore multiple agent solution hypotheses in parallel with lightweight `branch` and `checkout` without git conflicts.
 - **Portable Bundle Archiving**: Export/import complete sessions as `.rbk.tar.gz` bundles for cross-environment agent migration (Fly.io, Docker, E2B, Modal).
 - **Async & Sync Agent Tooling**: Native support for synchronous and `async def` agent tool loops (LangChain, AutoGen, CrewAI, MCP tools).
@@ -34,9 +40,15 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 ---
 
 ## 4. Key Features
+- **Selective File Revert**: `session.revert_file(cid, path)` and `session.cherry_pick(cid, [paths])`.
+- **Syntax Integrity Gate**: `session.check_integrity()` verifying Python, JSON, YAML, TOML, JS/TS.
+- **Workspace Sentinel**: `session.scan_drift()` and `session.auto_checkpoint(min_changes=1)`.
+- **3-Way Branch Merge Engine**: `session.merge_branch("feature-b")` with automatic conflict markers.
+- **Git Bridge**: `GitBridge(session).export_to_git()` and `import_from_git()`.
+- **Unified Diff Patches**: `export_patch()` and `apply_patch()`.
 - **Interactive HTML Session Dossier**: `session.to_html("dossier.html")` or `rollback report --html dossier.html`.
 - **Deterministic Replay Engine**: `session.replay("target_id", step_by_step=True)` or `rollback replay <tag>`.
-- **Native MCP Tool Server**: `rollback mcp` or `python -m rollback.mcp_server`.
+- **Native MCP Tool Server (14 Tools)**: `rollback mcp` or `python -m rollback.mcp_server`.
 - **Security Policy Guard**: `SecurityPolicy` blocks path escapes, symlink traversal, and protects `.env` secrets.
 - **Dry-Run Revert Planning**: `session.plan_revert("HEAD")` or `rollback revert --dry-run`.
 - **Timeline Branching**: `session.create_branch("feature-b")`, `session.checkout("feature-b")`.
@@ -104,12 +116,65 @@ Integrate `rollback` directly into Claude Code, OpenBot, Cursor, or Cline by add
 Exposed MCP tools:
 - `rollback_snapshot`: Instant micro-checkpoint before tool invocation.
 - `rollback_revert`: Atomic revert to target checkpoint ID or tag.
+- `rollback_revert_file`: Selectively revert specific files to prior checkpoint state.
 - `rollback_plan`: Dry-run revert preview.
 - `rollback_diff`: Inspect file additions, modifications, and deletions.
 - `rollback_branch`: Create and checkout hypothesis branches.
+- `rollback_merge`: Execute 3-way DAG branch merge with conflict markers.
+- `rollback_patch`: Export or apply standard unified diff patch files.
+- `rollback_git_sync`: Bidirectional Git synchronization bridge.
+- `rollback_check_integrity`: Multi-language code syntax & structural integrity audit.
+- `rollback_scan_drift`: Continuous workspace dirty detection and drift analysis.
 - `rollback_security_check`: Verify if path complies with containment policies.
 - `rollback_status`: Workspace status, active branch, and recent checkpoints.
 - `rollback_report`: Generate interactive HTML session dossier.
+
+### Precision Selective Revert & Cherry-Pick
+Revert a single corrupted file without rolling back the entire project:
+
+```python
+# Revert only auth.py back to a stable checkpoint
+session.revert_file("stable_v1", "src/auth.py")
+
+# Or cherry-pick a feature file from an experimental branch
+session.cherry_pick("hypothesis_b", ["src/router.py"])
+```
+Or via CLI:
+```bash
+rollback revert-file stable_v1 src/auth.py
+```
+
+### Code Syntax & Structural Integrity Gate
+Verify that code generated by AI models is parseable and structurally sound:
+
+```python
+# Audit workspace for syntax and structural integrity
+report = session.check_integrity()
+print(f"Clean: {report.is_clean} ({report.passed_count} passed, {report.failed_count} failed)")
+for failure in report.failures:
+    print(f"  {failure.path}: {failure.error_message}")
+```
+Or via CLI:
+```bash
+rollback integrity [--strict]
+```
+
+### Continuous Workspace Sentinel & Drift Watchdog
+Detect uncommitted agent side-effects and automatically checkpoint before risk boundaries:
+
+```python
+# Scan instantaneous workspace drift from HEAD
+drift = session.scan_drift()
+if drift.is_dirty:
+    print(f"Drift detected: {drift.total_changes} changes, {drift.total_delta_bytes} bytes modified")
+
+# Automatically snapshot if changes meet threshold
+session.auto_checkpoint(trigger_label="auto_guard", min_changes=2)
+```
+Or via CLI:
+```bash
+rollback drift [--auto-checkpoint]
+```
 
 ### Interactive HTML Session Dossier
 Generate an offline visual diagnostic report of the agent's timeline and file modifications:
@@ -280,6 +345,15 @@ rollback diff stable
 
 # Revert to a tag or checkpoint ID
 rollback revert stable
+
+# Selectively revert specific files to prior checkpoint
+rollback revert-file stable src/auth.py src/models.py
+
+# Audit code syntax and structural integrity across workspace
+rollback integrity [--strict] [--json]
+
+# Scan workspace drift from HEAD or trigger auto-checkpoint
+rollback drift [--auto-checkpoint] [--json]
 
 # Clean up old checkpoints and reclaim disk space
 rollback clean --keep 5

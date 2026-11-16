@@ -118,6 +118,28 @@ def main() -> None:
     p_git.add_argument("--max-commits", type=int, default=10, help="Max Git commits to import.")
     p_git.add_argument("--root", default=".", help="Root directory path.")
 
+    # Revert-File (Selective)
+    p_rev_file = subparsers.add_parser("revert-file", help="Selectively restore specific files from a prior checkpoint.")
+    p_rev_file.add_argument("checkpoint_id", help="Checkpoint ID or tag to restore files from.")
+    p_rev_file.add_argument("files", nargs="+", help="One or more file paths to restore.")
+    p_rev_file.add_argument("--dry-run", action="store_true", help="Preview selective revert without mutating disk.")
+    p_rev_file.add_argument("--root", default=".", help="Root directory path.")
+
+    # Integrity Gate
+    p_integ = subparsers.add_parser("integrity", help="Audit code syntax and structural integrity across workspace.")
+    p_integ.add_argument("--path", default=None, help="Specific file or directory to audit (defaults to workspace).")
+    p_integ.add_argument("--strict", action="store_true", help="Exit with error if any syntax issues are found.")
+    p_integ.add_argument("--json", action="store_true", help="Output audit report in JSON format.")
+    p_integ.add_argument("--root", default=".", help="Root directory path.")
+
+    # Drift / Sentinel
+    p_drift = subparsers.add_parser("drift", help="Scan uncommitted workspace drift against HEAD checkpoint.")
+    p_drift.add_argument("--auto-checkpoint", action="store_true", help="Trigger micro-checkpoint if drift is detected.")
+    p_drift.add_argument("--tag", default=None, help="Optional tag alias if auto-checkpointing.")
+    p_drift.add_argument("--json", action="store_true", help="Output drift report in JSON format.")
+    p_drift.add_argument("--root", default=".", help="Root directory path.")
+
+
     args = parser.parse_args()
     session = RollbackSession(root_dir=args.root)
 
@@ -344,6 +366,75 @@ def main() -> None:
         elif args.action == "import":
             cids = bridge.import_from_git(max_commits=args.max_commits)
             print(f"Imported {len(cids)} commit(s) into rollback checkpoints.")
+
+    elif args.command == "revert-file":
+        try:
+            res = session.revert_files(args.checkpoint_id, args.files, dry_run=args.dry_run)
+            if args.dry_run:
+                plan = res["plan"]
+                print(f"Selective Revert Plan (Dry Run) from {plan['target_checkpoint_id'][:8]}:")
+                print(f"  Total changes: {plan['total_changes']}")
+                for op in plan["operations"]:
+                    print(f"  - {op['path']}: {op['action']}")
+            else:
+                print(f"Selective Revert successful from {res['target_checkpoint_id'][:8]}!")
+                for path, act in res["files_affected"].items():
+                    print(f"  {path}: {act}")
+        except Exception as e:
+            print(f"Selective revert failed: {e}")
+            sys.exit(1)
+
+    elif args.command == "integrity":
+        import json
+        paths = [args.path] if args.path else None
+        try:
+            report = session.check_integrity(paths=paths, strict=args.strict)
+            if args.json:
+                print(json.dumps(report.to_dict(), indent=2))
+            else:
+                status_str = "CLEAN" if report.is_clean else "FAILURES DETECTED"
+                print(f"Integrity Audit [{status_str}]:")
+                print(f"  Files checked: {report.files_checked}")
+                print(f"  Passed: {report.passed_count}")
+                print(f"  Failed: {report.failed_count}")
+                if report.failures:
+                    print("\nIssues:")
+                    for f in report.failures:
+                        print(f"  - {f.path} ({f.language}): {f.error_message}")
+            if args.strict and not report.is_clean:
+                sys.exit(1)
+        except Exception as e:
+            print(f"Integrity check error: {e}")
+            sys.exit(1)
+
+    elif args.command == "drift":
+        import json
+        from .sentinel import WorkspaceSentinel
+        sentinel = WorkspaceSentinel(session)
+        if args.auto_checkpoint:
+            cp = sentinel.auto_checkpoint(tag=args.tag)
+            if cp:
+                print(f"Created auto-checkpoint {cp.id[:8]} ({cp.label})")
+            else:
+                print("Workspace is clean. No checkpoint created.")
+        else:
+            rep = sentinel.scan_drift()
+            if args.json:
+                print(json.dumps(rep.to_dict(), indent=2))
+            else:
+                status_str = "DIRTY" if rep.is_dirty else "CLEAN"
+                print(f"Workspace Sentinel Drift [{status_str}]:")
+                print(f"  HEAD: {rep.head_checkpoint_id[:8] if rep.head_checkpoint_id else 'none'} ({rep.head_label})")
+                print(f"  Total Changes: {rep.total_changes}")
+                print(f"  Modified: {len(rep.modified_files)}")
+                print(f"  Untracked: {len(rep.untracked_files)}")
+                print(f"  Deleted: {len(rep.deleted_files)}")
+                print(f"  Drift Ratio: {rep.drift_ratio:.1%}")
+                if rep.files:
+                    print("\nChanged Files:")
+                    for f in rep.files:
+                        print(f"  - [{f.status.upper()}] {f.path} (delta {f.size_delta:+d} bytes)")
+
 
 
 if __name__ == "__main__":
