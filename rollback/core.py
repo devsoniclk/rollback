@@ -509,6 +509,32 @@ class RollbackSession:
         with open(hist_path, "w") as f:
             json.dump(self.history, f)
 
+    def to_html(
+        self,
+        output_path: Optional[Union[str, Path]] = None,
+        title: str = "Rollback Session Dossier",
+    ) -> str:
+        """Renders an interactive dark-mode HTML visual dossier for this session."""
+        from .html_report import render_html_report
+        return render_html_report(self, output_path=output_path, title=title)
+
+    def replay(
+        self,
+        target_identifier: str,
+        step_by_step: bool = False,
+        dry_run: bool = False,
+        on_step: Optional[Any] = None,
+    ) -> Any:
+        """Deterministically replays workspace state to target checkpoint or tag."""
+        from .replay import ReplayEngine
+        engine = ReplayEngine(self)
+        return engine.replay(
+            target_identifier=target_identifier,
+            step_by_step=step_by_step,
+            dry_run=dry_run,
+            on_step=on_step,
+        )
+
     def _load_history(self) -> None:
         hist_path = self.journal_dir / "history.json"
         if hist_path.exists():

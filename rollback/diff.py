@@ -21,6 +21,22 @@ class DiffSummary:
     total_files_changed: int
     files: List[FileDelta]
 
+    @property
+    def is_clean(self) -> bool:
+        return self.total_files_changed == 0
+
+    @property
+    def added(self) -> List[str]:
+        return [f.path for f in self.files if f.change_type == "added"]
+
+    @property
+    def modified(self) -> List[str]:
+        return [f.path for f in self.files if f.change_type == "modified"]
+
+    @property
+    def deleted(self) -> List[str]:
+        return [f.path for f in self.files if f.change_type == "deleted"]
+
     def format_diff(self) -> str:
         lines = [f"=== Diff: {self.from_id} -> {self.to_id} ({self.total_files_changed} files changed) ==="]
         for f in self.files:

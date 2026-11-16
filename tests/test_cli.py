@@ -146,3 +146,27 @@ def test_cli_lifecycle(workspace):
     )
     assert res.returncode == 0
     assert "Cleaned journal:" in res.stdout
+
+    # 9. Report / HTML Dossier CLI
+    rep_html = workspace / "dossier.html"
+    res_rep = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "report", "--html", str(rep_html), "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_rep.returncode == 0
+    assert "Generated visual session dossier at" in res_rep.stdout
+    assert rep_html.exists()
+
+    # 10. Replay CLI
+    res_rpl = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "replay", "HEAD", "--step", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_rpl.returncode == 0
+    assert "Replayed" in res_rpl.stdout

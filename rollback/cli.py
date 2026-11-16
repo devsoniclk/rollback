@@ -73,6 +73,23 @@ def main() -> None:
     p_clean.add_argument("--all", action="store_true", help="Purge all checkpoints and blobs completely.")
     p_clean.add_argument("--root", default=".", help="Root directory path.")
 
+    # Report / HTML Dossier
+    p_rep = subparsers.add_parser("report", help="Generate an interactive HTML session dossier visualizer.")
+    p_rep.add_argument("--html", default="rollback_dossier.html", help="Output file path (default: rollback_dossier.html).")
+    p_rep.add_argument("--title", default="Rollback Session Dossier", help="Dossier title.")
+    p_rep.add_argument("--root", default=".", help="Root directory path.")
+
+    # Replay
+    p_rpl = subparsers.add_parser("replay", help="Replay history deterministically to a target checkpoint or tag.")
+    p_rpl.add_argument("target", help="Target checkpoint ID, tag name, or 'HEAD'.")
+    p_rpl.add_argument("--step", action="store_true", help="Step through intermediate checkpoints sequentially.")
+    p_rpl.add_argument("--dry-run", action="store_true", help="Simulate replay operations without modifying disk.")
+    p_rpl.add_argument("--root", default=".", help="Root directory path.")
+
+    # MCP Server
+    p_mcp = subparsers.add_parser("mcp", help="Start the Model Context Protocol (MCP) stdio tool server for AI coding agents.")
+    p_mcp.add_argument("--root", default=".", help="Root directory path.")
+
     args = parser.parse_args()
     session = RollbackSession(root_dir=args.root)
 
@@ -205,6 +222,30 @@ def main() -> None:
             f"Cleaned journal: {res['checkpoints_removed']} checkpoints removed, "
             f"{res['blobs_removed']} unreferenced blobs deleted, {res['bytes_reclaimed']} bytes reclaimed."
         )
+
+    elif args.command == "report":
+        from .html_report import render_html_report
+        out_p = Path(args.html)
+        render_html_report(session, output_path=out_p, title=args.title)
+        print(f"Generated visual session dossier at {out_p.resolve()}")
+
+    elif args.command == "replay":
+        try:
+            res = session.replay(
+                target_identifier=args.target,
+                step_by_step=args.step,
+                dry_run=args.dry_run,
+                on_step=lambda st: print(f"  [STEP {st.step_number}] -> {st.to_checkpoint_id[:8]} ({st.label}) in {st.duration_ms:.1f}ms"),
+            )
+            print(res.message)
+        except Exception as e:
+            print(f"Error during replay: {e}")
+            sys.exit(1)
+
+    elif args.command == "mcp":
+        from .mcp_server import RollbackMCPServer
+        server = RollbackMCPServer(root_dir=args.root)
+        server.run_stdio()
 
 
 if __name__ == "__main__":

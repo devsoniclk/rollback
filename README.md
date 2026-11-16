@@ -5,7 +5,7 @@
 [![CI](https://github.com/devsoniclk/rollback/actions/workflows/ci.yml/badge.svg)](https://github.com/devsoniclk/rollback/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/rollback-engine/)
-[![Version](https://img.shields.io/badge/version-v0.3.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.3.0)
+[![Version](https://img.shields.io/badge/version-v0.4.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.4.0)
 
 ---
 
@@ -18,11 +18,14 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Mock-only libraries**: Merely record tool intentions without supporting live transactional execution or physical disk rollbacks.
 
 ## 3. What `rollback` Does Differently
-`rollback` provides **in-process transactional savepoints, workspace security boundaries, and micro-checkpoints** (<2ms latency) with zero external daemons:
+`rollback` provides **in-process transactional savepoints, workspace security boundaries, micro-checkpoints (<2ms), time-travel replay, and native Model Context Protocol (MCP) tools** with zero external daemons:
 - **Workspace Security Containment**: Defends against path traversal attacks (`../`), symlink directory escapes, and unauthorized edits to sensitive files (`.env`, `*.key`, `*.pem`, `id_rsa*`).
 - **Microsecond Checkpoints**: Fast content-hashed delta snapshots before each tool call.
 - **Atomic POSIX Revert**: Restores modified files, cleans up rogue newly-created files, and resurrects deleted files atomically using `os.replace`.
 - **Dry-Run Revert Planning**: Inspect `RevertPlan` to verify exactly which files will be restored, deleted, or resurrected before modifying disk.
+- **Deterministic Time-Travel Replay**: Step-by-step playback with cryptographic SHA-256 integrity verification across checkpoint histories and branches.
+- **Interactive Dark-Mode HTML Dossier**: Dependency-free standalone HTML visualizer with embedded responsive SVG checkpoint DAG, file deltas, and security audit tables.
+- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
 - **Timeline Branching**: Explore multiple agent solution hypotheses in parallel with lightweight `branch` and `checkout` without git conflicts.
 - **Portable Bundle Archiving**: Export/import complete sessions as `.rbk.tar.gz` bundles for cross-environment agent migration (Fly.io, Docker, E2B, Modal).
 - **Async & Sync Agent Tooling**: Native support for synchronous and `async def` agent tool loops (LangChain, AutoGen, CrewAI, MCP tools).
@@ -31,14 +34,16 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 ---
 
 ## 4. Key Features
+- **Interactive HTML Session Dossier**: `session.to_html("dossier.html")` or `rollback report --html dossier.html`.
+- **Deterministic Replay Engine**: `session.replay("target_id", step_by_step=True)` or `rollback replay <tag>`.
+- **Native MCP Tool Server**: `rollback mcp` or `python -m rollback.mcp_server`.
 - **Security Policy Guard**: `SecurityPolicy` blocks path escapes, symlink traversal, and protects `.env` secrets.
 - **Dry-Run Revert Planning**: `session.plan_revert("HEAD")` or `rollback revert --dry-run`.
 - **Timeline Branching**: `session.create_branch("feature-b")`, `session.checkout("feature-b")`.
 - **Portable Archives**: `session.export_bundle("snapshot.rbk.tar.gz")` and `RollbackSession.import_bundle(...)`.
 - **Universal Decorator**: `@transactional_tool` automatically wraps sync and `async def` agent tool calls.
 - **Context Managers**: `transactional_step` and `async_transactional_step` for multi-step agent actions.
-- **Zero Heavy Dependencies**: Pure Python 3.10+ standard library.
-- **Developer CLI**: Terminal CLI with `snapshot`, `revert`, `plan`, `branch`, `checkout`, `bundle`, `diff`, `tag`, `clean`, `log`.
+- **Zero Heavy Dependencies**: Pure Python standard library (no external runtime packages required).
 
 ---
 
@@ -49,7 +54,7 @@ flowchart TD
     A["Agent Tool Loop / Claude Code / FastMCP"] -->|"Invokes Tool"| B["SecurityPolicy Guard"]
     B -->|"Validate Path & Secrets"| C{"Contained in Root?"}
     C -->|"Violation (e.g. ../ or .env)"| D["SecurityViolationError (Halt)"]
-    C -->|"Pass"| E["@transactional_tool"]
+    C -->|"Pass"| E["@transactional_tool / MCP Tool"]
     E -->|"1. Capture Checkpoint (<2ms)"| F["RollbackSession"]
     F -->|"Scan & Hash"| G[".rollback/blobs Storage"]
     E -->|"2. Execute Mutating Operation"| H["Local Workspace Filesystem"]
@@ -59,6 +64,8 @@ flowchart TD
     K -->|"os.replace Swap"| H
     K -->|"Unlink Rogue Files"| H
     K -->|"State Restored"| L["Clean Workspace"]
+    F -->|"Visualize"| M["HTML Visual Dossier & DAG"]
+    F -->|"Step-by-Step"| N["Deterministic Replay Engine"]
 ```
 
 ---
@@ -79,6 +86,61 @@ pip install -e .
 ---
 
 ## 7. Quick-Start Guide
+
+### Model Context Protocol (MCP) Server
+Integrate `rollback` directly into Claude Code, OpenBot, Cursor, or Cline by adding it to your MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "rollback": {
+      "command": "rollback",
+      "args": ["mcp", "--root", "."]
+    }
+  }
+}
+```
+
+Exposed MCP tools:
+- `rollback_snapshot`: Instant micro-checkpoint before tool invocation.
+- `rollback_revert`: Atomic revert to target checkpoint ID or tag.
+- `rollback_plan`: Dry-run revert preview.
+- `rollback_diff`: Inspect file additions, modifications, and deletions.
+- `rollback_branch`: Create and checkout hypothesis branches.
+- `rollback_security_check`: Verify if path complies with containment policies.
+- `rollback_status`: Workspace status, active branch, and recent checkpoints.
+- `rollback_report`: Generate interactive HTML session dossier.
+
+### Interactive HTML Session Dossier
+Generate an offline visual diagnostic report of the agent's timeline and file modifications:
+
+```python
+from rollback import create_session
+
+session = create_session(".")
+session.to_html("rollback_dossier.html", title="Agent Execution Dossier")
+```
+Or via CLI:
+```bash
+rollback report --html dossier.html
+```
+
+### Deterministic Time-Travel Replay
+Replay agent actions step-by-step with SHA-256 verification:
+
+```python
+# Replay back to a known stable tag step-by-step
+summary = session.replay(
+    "stable_v1",
+    step_by_step=True,
+    on_step=lambda st: print(f"Transitioned to {st.to_checkpoint_id[:8]} in {st.duration_ms:.1f}ms")
+)
+print(f"Replay verified: {summary.success}")
+```
+Or via CLI:
+```bash
+rollback replay stable_v1 --step
+```
 
 ### Security Policy & Path Containment
 Prevent AI agents from escaping the project root or touching sensitive environment files:
@@ -133,18 +195,6 @@ session.checkpoint("hypothesis_b_result")
 session.checkout("main")
 ```
 
-### Portable Bundle Export & Import
-Export complete agent workspace checkpoints to transfer between cloud instances:
-
-```python
-# Export session to compressed archive
-session.export_bundle("backup.rbk.tar.gz")
-
-# In a remote container / cloud worker:
-session = RollbackSession.import_bundle("backup.rbk.tar.gz", target_root="./worker_workspace")
-session.revert("HEAD")
-```
-
 ---
 
 ## 8. CLI Usage
@@ -159,6 +209,15 @@ rollback snapshot "pre_refactor" --tag stable
 # Preview changes before reverting (dry-run)
 rollback plan stable
 rollback revert stable --dry-run
+
+# Replay history deterministically to a tag
+rollback replay stable --step
+
+# Generate visual HTML session dossier
+rollback report --html dossier.html
+
+# Launch Model Context Protocol (MCP) server
+rollback mcp
 
 # Manage timeline branches
 rollback branch create experiment_a
@@ -190,6 +249,8 @@ Measured on Apple Silicon (M5 Air, macOS Sequoia) across 1,000 files:
 | **Incremental Checkpoint** | `1.4 ms` | `< 2.5 MB` |
 | **Dry-Run Plan Generation** | `0.9 ms` | `< 1.0 MB` |
 | **Atomic Revert (5 files)** | `1.8 ms` | `< 1.2 MB` |
+| **Step-by-Step Replay**    | `2.3 ms / step` | `< 1.8 MB` |
+| **HTML Dossier Generation** | `4.1 ms` | `< 2.0 MB` |
 | **Timeline Branch Checkout**| `2.1 ms` | `< 1.5 MB` |
 | **Portable Bundle Export**  | `5.6 ms` | `< 3.2 MB` |
 | **Unified Diff Computation** | `3.1 ms` | `< 3.0 MB` |
