@@ -5,10 +5,12 @@ Guards against path traversal, symlink directory escapes, rogue file creation, a
 unauthorized modification of sensitive files (.env, private keys, system files).
 """
 
+from __future__ import annotations
+
 import fnmatch
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Union
 
 
 class SecurityViolationError(Exception):
