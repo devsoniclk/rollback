@@ -1,7 +1,7 @@
 """
 agent-witness integration for rollback.
 Enables automatic cryptographic Merkle attestation of rollback checkpoints,
-diff summaries, and transactional leases.
+diff summaries, and transactional leases with zero-dependency standalone fallback.
 """
 from __future__ import annotations
 
@@ -25,22 +25,43 @@ def attest_checkpoint(
     """
     Attests a rollback checkpoint into an agent-witness deliberation step or receipt.
     """
-    eng = engine or (WitnessEngine(agent_id=agent_id) if HAS_WITNESS else None)
+    tracked = list(checkpoint.files.keys()) if hasattr(checkpoint, "files") and isinstance(checkpoint.files, dict) else []
     step_desc = f"Rollback Checkpoint: {checkpoint.id} ({checkpoint.label})"
-    tracked = list(checkpoint.files.keys()) if hasattr(checkpoint, "files") else getattr(checkpoint, "tracked_files", [])
     meta = {
         "checkpoint_id": checkpoint.id,
         "label": checkpoint.label,
         "timestamp": checkpoint.timestamp,
-        "parent_id": checkpoint.parent_id,
+        "parent_id": getattr(checkpoint, "parent_id", None),
         "file_count": len(tracked),
         "tracked_files": sorted(tracked),
     }
-    if eng:
+
+    if engine is not None:
+        step = engine.record_step(getattr(engine, "step_type", "tool_result"), step_desc, metadata=meta)
+        idx = getattr(step, "index", 0)
+        return {
+            "attested": True,
+            "step_index": idx,
+            "checkpoint_id": checkpoint.id,
+            "witness_installed": True,
+        }
+
+    if HAS_WITNESS:
+        eng = WitnessEngine(agent_id=agent_id)
         step = eng.record_step(StepType.TOOL_RESULT, step_desc, metadata=meta)
-        return {"attested": True, "step_index": step.index, "checkpoint_id": checkpoint.id}
-    else:
-        return {"attested": False, "checkpoint_id": checkpoint.id, "reason": "agent-witness not installed"}
+        return {
+            "attested": True,
+            "step_index": step.index,
+            "checkpoint_id": checkpoint.id,
+            "witness_installed": True,
+        }
+
+    return {
+        "attested": False,
+        "checkpoint_id": checkpoint.id,
+        "reason": "agent-witness not installed",
+        "witness_installed": False,
+    }
 
 
 def attest_diff_summary(
@@ -51,22 +72,41 @@ def attest_diff_summary(
     """
     Attests a file diff summary into an agent-witness deliberation step.
     """
-    eng = engine or (WitnessEngine(agent_id=agent_id) if HAS_WITNESS else None)
     files_changed = getattr(diff_summary, "total_files_changed", getattr(diff_summary, "files_changed", 0))
-    files = getattr(diff_summary, "files", [])
-    insertions = sum(getattr(f, "lines_added", 0) for f in files) if files else getattr(diff_summary, "insertions", 0)
-    deletions = sum(getattr(f, "lines_deleted", 0) for f in files) if files else getattr(diff_summary, "deletions", 0)
-    modified_files = [getattr(f, "path", str(f)) for f in files] if files else getattr(diff_summary, "modified_files", [])
+    ins = getattr(diff_summary, "total_insertions", getattr(diff_summary, "insertions", 0))
+    dels = getattr(diff_summary, "total_deletions", getattr(diff_summary, "deletions", 0))
 
-    step_desc = f"Rollback Diff: {files_changed} changed, +{insertions}/-{deletions}"
+    step_desc = f"Rollback Diff: {files_changed} changed, +{ins}/-{dels}"
     meta = {
         "files_changed": files_changed,
-        "insertions": insertions,
-        "deletions": deletions,
-        "modified_files": modified_files,
+        "insertions": ins,
+        "deletions": dels,
+        "modified_files": getattr(diff_summary, "modified_files", []),
     }
-    if eng:
+
+    if engine is not None:
+        step = engine.record_step(getattr(engine, "step_type", "tool_result"), step_desc, metadata=meta)
+        idx = getattr(step, "index", 0)
+        return {
+            "attested": True,
+            "step_index": idx,
+            "files_changed": files_changed,
+            "witness_installed": True,
+        }
+
+    if HAS_WITNESS:
+        eng = WitnessEngine(agent_id=agent_id)
         step = eng.record_step(StepType.TOOL_RESULT, step_desc, metadata=meta)
-        return {"attested": True, "step_index": step.index, "files_changed": files_changed}
-    else:
-        return {"attested": False, "reason": "agent-witness not installed"}
+        return {
+            "attested": True,
+            "step_index": step.index,
+            "files_changed": files_changed,
+            "witness_installed": True,
+        }
+
+    return {
+        "attested": False,
+        "files_changed": files_changed,
+        "reason": "agent-witness not installed",
+        "witness_installed": False,
+    }
