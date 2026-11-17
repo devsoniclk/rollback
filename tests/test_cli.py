@@ -231,7 +231,7 @@ def test_cli_lifecycle(workspace):
 
     # 16. Heal CLI
     res_heal = subprocess.run(
-        [sys.executable, "-m", "rollback.cli", "heal", f"{sys.executable} -c 'import sys; sys.exit(0)'", "--root", str(workspace)],
+        [sys.executable, "-m", "rollback.cli", "heal", f'"{sys.executable}" -c "import sys; sys.exit(0)"', "--root", str(workspace)],
         cwd=str(repo_root),
         capture_output=True,
         text=True,

@@ -207,7 +207,7 @@ def test_mcp_server_protocol_lifecycle() -> None:
             "params": {
                 "name": "rollback_auto_heal",
                 "arguments": {
-                    "command": f"{sys.executable} -c 'import sys; sys.exit(0)'",
+                    "command": f'"{sys.executable}" -c "import sys; sys.exit(0)"',
                     "auto_revert": True,
                 },
             },
