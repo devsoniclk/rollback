@@ -5,7 +5,7 @@
 [![CI](https://github.com/devsoniclk/rollback/actions/workflows/ci.yml/badge.svg)](https://github.com/devsoniclk/rollback/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/rollback-engine/)
-[![Version](https://img.shields.io/badge/version-v0.7.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.7.0)
+[![Version](https://img.shields.io/badge/version-v0.8.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.8.0)
 
 ---
 
@@ -34,7 +34,7 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Dry-Run Revert Planning**: Inspect `RevertPlan` to verify exactly which files will be restored, deleted, or resurrected before modifying disk.
 - **Deterministic Time-Travel Replay**: Step-by-step playback with cryptographic SHA-256 integrity verification across checkpoint histories and branches.
 - **Interactive Dark-Mode HTML Dossier**: Dependency-free standalone HTML visualizer with embedded responsive SVG checkpoint DAG, file deltas, and security audit tables.
-- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server (18 tools) for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
+- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server (24 tools) for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
 - **Timeline Branching**: Explore multiple agent solution hypotheses in parallel with lightweight `branch` and `checkout` without git conflicts.
 - **Portable Bundle Archiving**: Export/import complete sessions as `.rbk.tar.gz` bundles for cross-environment agent migration (Fly.io, Docker, E2B, Modal).
 - **Async & Sync Agent Tooling**: Native support for synchronous and `async def` agent tool loops (LangChain, AutoGen, CrewAI, MCP tools).
