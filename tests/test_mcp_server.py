@@ -22,7 +22,7 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert init_resp is not None
         assert init_resp["id"] == 1
         assert init_resp["result"]["serverInfo"]["name"] == "rollback-engine"
-        assert init_resp["result"]["serverInfo"]["version"] == "0.7.0"
+        assert init_resp["result"]["serverInfo"]["version"] == "0.8.0"
 
         # 2. Ping
         ping_resp = server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "ping"})
@@ -51,7 +51,13 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert "rollback_speculative_sandbox" in tool_names
         assert "rollback_acquire_lease" in tool_names
         assert "rollback_release_lease" in tool_names
-        assert len(tool_names) == 18
+        assert "rollback_assert_invariants" in tool_names
+        assert "rollback_create_shadow" in tool_names
+        assert "rollback_evaluate_shadow" in tool_names
+        assert "rollback_promote_shadow" in tool_names
+        assert "rollback_timeline_graph" in tool_names
+        assert "rollback_cas_stats" in tool_names
+        assert len(tool_names) == 24
 
         # 4. Create snapshot tool call
         (Path(tmpdir) / "test.txt").write_text("hello mcp")
@@ -271,3 +277,95 @@ def test_mcp_server_protocol_lifecycle() -> None:
         rel_data = json.loads(rel_resp["result"]["content"][0]["text"])
         assert rel_data["status"] == "success"
         assert rel_data["released"] is True
+
+        # 17. Invariant check tool call
+        inv_req = {
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_assert_invariants",
+                "arguments": {"strict": False},
+            },
+        }
+        inv_resp = server.handle_request(inv_req)
+        assert inv_resp is not None
+        inv_data = json.loads(inv_resp["result"]["content"][0]["text"])
+        assert "passed" in inv_data
+
+        # 18. Shadow clone tool calls
+        sh_create_req = {
+            "jsonrpc": "2.0",
+            "id": 18,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_create_shadow",
+                "arguments": {"hypothesis_id": "hyp-mcp-1", "description": "MCP shadow test"},
+            },
+        }
+        sh_create_resp = server.handle_request(sh_create_req)
+        assert sh_create_resp is not None
+        sh_create_data = json.loads(sh_create_resp["result"]["content"][0]["text"])
+        assert sh_create_data["status"] == "success"
+
+        sh_eval_req = {
+            "jsonrpc": "2.0",
+            "id": 19,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_evaluate_shadow",
+                "arguments": {
+                    "hypothesis_id": "hyp-mcp-1",
+                    "test_cmd": "python3 -c 'exit(0)'",
+                },
+            },
+        }
+        sh_eval_resp = server.handle_request(sh_eval_req)
+        assert sh_eval_resp is not None
+        sh_eval_data = json.loads(sh_eval_resp["result"]["content"][0]["text"])
+        assert sh_eval_data["result"]["passed"] is True
+
+        sh_prom_req = {
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_promote_shadow",
+                "arguments": {"hypothesis_id": "hyp-mcp-1"},
+            },
+        }
+        sh_prom_resp = server.handle_request(sh_prom_req)
+        assert sh_prom_resp is not None
+        sh_prom_data = json.loads(sh_prom_resp["result"]["content"][0]["text"])
+        assert sh_prom_data["status"] == "promoted"
+
+        # 19. Timeline graph tool call
+        tl_req = {
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_timeline_graph",
+                "arguments": {"as_json": True},
+            },
+        }
+        tl_resp = server.handle_request(tl_req)
+        assert tl_resp is not None
+        tl_data = json.loads(tl_resp["result"]["content"][0]["text"])
+        assert "total_checkpoints" in tl_data
+
+        # 20. CAS stats tool call
+        cas_req = {
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "tools/call",
+            "params": {
+                "name": "rollback_cas_stats",
+                "arguments": {},
+            },
+        }
+        cas_resp = server.handle_request(cas_req)
+        assert cas_resp is not None
+        cas_data = json.loads(cas_resp["result"]["content"][0]["text"])
+        assert cas_data["status"] == "success"
+        assert "cas_stats" in cas_data

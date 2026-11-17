@@ -43,6 +43,10 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 ---
 
 ## 4. Key Features
+- **Pre/Post-Action Invariant Assertion Engine**: `session.assert_invariants()` and `rollback invariant test/add/list`.
+- **Ephemeral Worktree Shadow Clones & Multi-Hypothesis Explorer**: `session.shadow_manager` and `rollback shadow create/eval/promote/discard/list`.
+- **Interactive Timeline DAG Visualizer**: `session.timeline` and `rollback timeline [--branch <b_name>] [--json]`.
+- **Content-Addressed Storage (CAS) Deduplication**: `session.cas_store` and `rollback cas --stats`.
 - **Auto-Healing Execution Watchdog**: `session.heal(cmd, auto_revert=True)` and `rollback heal <cmd>`.
 - **In-Memory Speculative Sandbox**: `with session.speculative_sandbox() as sb: ...`
 - **Multi-Agent Workspace Leases**: `session.acquire_lease("agent-1", ["core.py"])` and `session.release_lease(token)`.
@@ -54,7 +58,7 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Unified Diff Patches**: `export_patch()` and `apply_patch()`.
 - **Interactive HTML Session Dossier**: `session.to_html("dossier.html")` or `rollback report --html dossier.html`.
 - **Deterministic Replay Engine**: `session.replay("target_id", step_by_step=True)` or `rollback replay <tag>`.
-- **Native MCP Tool Server (14 Tools)**: `rollback mcp` or `python -m rollback.mcp_server`.
+- **Native MCP Tool Server (24 Tools)**: `rollback mcp` or `python -m rollback.mcp_server`.
 - **Security Policy Guard**: `SecurityPolicy` blocks path escapes, symlink traversal, and protects `.env` secrets.
 - **Dry-Run Revert Planning**: `session.plan_revert("HEAD")` or `rollback revert --dry-run`.
 - **Timeline Branching**: `session.create_branch("feature-b")`, `session.checkout("feature-b")`.
@@ -134,6 +138,16 @@ Exposed MCP tools:
 - `rollback_security_check`: Verify if path complies with containment policies.
 - `rollback_status`: Workspace status, active branch, and recent checkpoints.
 - `rollback_report`: Generate interactive HTML session dossier.
+- `rollback_auto_heal`: Run commands under watchdog guard with auto-revert on failure.
+- `rollback_speculative_sandbox`: In-memory copy-on-write overlay sandbox.
+- `rollback_acquire_lease`: Coordinate exclusive/shared file access among multi-agent swarms.
+- `rollback_release_lease`: Release active path lease with secret token.
+- `rollback_assert_invariants`: Evaluate declared workspace invariant assertions (tests, syntax, regex).
+- `rollback_create_shadow`: Spawn isolated copy-on-write shadow workspace for hypothesis testing.
+- `rollback_evaluate_shadow`: Run verification commands in shadow clone and score results.
+- `rollback_promote_shadow`: Atomically promote winning shadow hypothesis to main workspace.
+- `rollback_timeline_graph`: Render ASCII timeline DAG or JSON metadata of checkpoints and branches.
+- `rollback_cas_stats`: Query Content-Addressed Storage deduplication statistics and savings.
 
 ### Precision Selective Revert & Cherry-Pick
 Revert a single corrupted file without rolling back the entire project:
@@ -301,6 +315,106 @@ apply_res = apply_patch(session, "refactor.patch", dry_run=False)
 print(f"Patched: {apply_res.files_affected}")
 ```
 
+### Pre/Post-Action Invariant Assertion Engine
+Enforce strict behavioral invariants (test execution, syntax compilation, file size limits, and prohibited regex patterns) across agent modifications:
+
+```python
+from rollback import create_session, InvariantRule, InvariantType
+
+session = create_session(".")
+gate = session.invariant_gate
+
+# Declare invariant rules
+gate.add_rule(InvariantRule(
+    name="unit_tests",
+    rule_type=InvariantType.COMMAND,
+    target_pattern="pytest tests/test_core.py -q",
+    severity="error",
+))
+gate.add_rule(InvariantRule(
+    name="no_eval",
+    rule_type=InvariantType.REGEX_PROHIBIT,
+    target_pattern=r"\beval\(",
+    file_glob="*.py",
+))
+gate.save_rules()
+
+# Evaluate before or after an agent step
+report = session.assert_invariants(strict=True)
+print(f"Invariants satisfied: {report.passed} ({report.passed_rules}/{report.total_rules})")
+```
+Or via CLI:
+```bash
+# Add a rule
+rollback invariant add --name no_eval --type regex_prohibit --pattern "\\beval\\(" --glob "*.py"
+
+# Verify all invariants
+rollback invariant test [--strict]
+```
+
+### Ephemeral Worktree Shadow Clones & Hypothesis Explorer
+Allow coding agents to explore multiple competing implementation hypotheses (e.g. Solution A vs Solution B for a bug fix) in isolated copy-on-write clones without mutating the user's active workspace:
+
+```python
+manager = session.shadow_manager
+
+# 1. Spawn isolated clone
+hyp = manager.create_hypothesis("fix-auth-leak", description="Sanitize tokens before logging")
+
+# 2. Modify files inside the shadow directory (hyp.shadow_path)
+# ... agent edits shadow_path / "auth.py" ...
+
+# 3. Sandboxed verification
+eval_result = manager.evaluate_hypothesis(
+    "fix-auth-leak",
+    test_cmd="pytest tests/test_auth.py -q",
+    timeout_sec=15.0
+)
+print(f"Hypothesis passed: {eval_result.passed} (score={eval_result.score})")
+
+# 4. Atomically promote winning solution into active workspace
+if eval_result.passed:
+    res = manager.promote_hypothesis("fix-auth-leak", create_checkpoint=True)
+    print(f"Promoted {res['promoted_files_count']} files to main workspace.")
+else:
+    manager.discard_hypothesis("fix-auth-leak")
+```
+Or via CLI:
+```bash
+rollback shadow create --id fix-01 --desc "Alternative parser"
+rollback shadow eval --id fix-01 --cmd "pytest tests/test_parser.py"
+rollback shadow promote --id fix-01
+rollback shadow discard --id fix-01
+```
+
+### Interactive Timeline DAG Visualizer
+Render a visual ASCII branch tree of checkpoints, tags, and commits:
+
+```python
+# Render ASCII DAG
+print(session.timeline.render_ascii(max_nodes=15))
+
+# Or structured JSON for UIs
+dag_data = session.timeline.to_dict()
+```
+Or via CLI:
+```bash
+rollback timeline [--branch main] [--max 25] [--json]
+```
+
+### Content-Addressed Storage (CAS) Deduplication
+Inspect deduplication and disk compression savings across hundreds of micro-checkpoints:
+
+```python
+cas = session.cas_store
+stats = cas.get_stats()
+print(f"Stored {stats.total_objects} unique objects. Dedup ratio: {stats.deduplication_ratio:.2f}x (saved {stats.savings_percent:.1f}%)")
+```
+Or via CLI:
+```bash
+rollback cas --stats
+```
+
 ---
 
 ## 8. CLI Usage
@@ -360,6 +474,32 @@ rollback integrity [--strict] [--json]
 
 # Scan workspace drift from HEAD or trigger auto-checkpoint
 rollback drift [--auto-checkpoint] [--json]
+
+# Guard command execution under auto-healer watchdog
+rollback heal "pytest tests/" [--timeout 60] [--no-revert]
+
+# Coordinate multi-agent file leases
+rollback lease acquire --agent agent-1 --paths src/core.py --ttl 300
+rollback lease list
+rollback lease release --token <secret-token>
+
+# Evaluate workspace invariants
+rollback invariant test [--strict]
+rollback invariant add --name no_eval --type regex_prohibit --pattern "\\beval\\("
+rollback invariant list
+
+# Manage ephemeral shadow clone hypotheses
+rollback shadow create --id hyp-01 --desc "Refactor async loop"
+rollback shadow eval --id hyp-01 --cmd "pytest tests/"
+rollback shadow promote --id hyp-01
+rollback shadow discard --id hyp-01
+rollback shadow list
+
+# Visualize timeline DAG
+rollback timeline [--branch main] [--max 20]
+
+# Inspect CAS deduplication statistics
+rollback cas --stats
 
 # Clean up old checkpoints and reclaim disk space
 rollback clean --keep 5

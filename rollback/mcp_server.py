@@ -393,6 +393,112 @@ class RollbackMCPServer:
                     "required": ["token"],
                 },
             },
+            {
+                "name": "rollback_assert_invariants",
+                "description": "Evaluate declared invariant assertion rules (tests, syntax, regex constraints, file boundaries) across the workspace.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "strict": {
+                            "type": "boolean",
+                            "description": "Whether to raise an error if any invariant check fails.",
+                            "default": False,
+                        },
+                    },
+                },
+            },
+            {
+                "name": "rollback_create_shadow",
+                "description": "Create an ephemeral copy-on-write shadow clone workspace to test an experimental hypothesis in isolation.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hypothesis_id": {
+                            "type": "string",
+                            "description": "Unique hypothesis identifier (e.g., 'fix-null-pointer').",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Description of the hypothesis being explored.",
+                            "default": "",
+                        },
+                    },
+                    "required": ["hypothesis_id"],
+                },
+            },
+            {
+                "name": "rollback_evaluate_shadow",
+                "description": "Execute a verification test command inside an isolated shadow clone workspace and evaluate results.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hypothesis_id": {
+                            "type": "string",
+                            "description": "Hypothesis identifier.",
+                        },
+                        "test_cmd": {
+                            "type": "string",
+                            "description": "Shell command to execute inside the shadow clone.",
+                        },
+                        "timeout_sec": {
+                            "type": "number",
+                            "description": "Timeout in seconds.",
+                            "default": 30.0,
+                        },
+                    },
+                    "required": ["hypothesis_id", "test_cmd"],
+                },
+            },
+            {
+                "name": "rollback_promote_shadow",
+                "description": "Atomically promote a verified shadow hypothesis into the main workspace and record a checkpoint.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hypothesis_id": {
+                            "type": "string",
+                            "description": "Hypothesis identifier.",
+                        },
+                        "create_checkpoint": {
+                            "type": "boolean",
+                            "description": "Whether to record an automatic checkpoint on promotion.",
+                            "default": True,
+                        },
+                    },
+                    "required": ["hypothesis_id"],
+                },
+            },
+            {
+                "name": "rollback_timeline_graph",
+                "description": "Generate an ASCII timeline DAG or JSON metadata of checkpoints, tags, branches, and commits.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "branch": {
+                            "type": "string",
+                            "description": "Filter by branch name.",
+                        },
+                        "max_nodes": {
+                            "type": "integer",
+                            "description": "Maximum number of nodes to render.",
+                            "default": 20,
+                        },
+                        "as_json": {
+                            "type": "boolean",
+                            "description": "Return structured JSON instead of ASCII text.",
+                            "default": False,
+                        },
+                    },
+                },
+            },
+            {
+                "name": "rollback_cas_stats",
+                "description": "Query Content-Addressed Storage (CAS) deduplication statistics, compression savings, and stored object counts.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
         ]
 
     def execute_tool(self, name: str, args: Dict[str, Any]) -> str:
@@ -666,6 +772,58 @@ class RollbackMCPServer:
                 "released": released,
             }, indent=2)
 
+        elif name == "rollback_assert_invariants":
+            strict = args.get("strict", False)
+            report = self.session.assert_invariants(strict=strict)
+            return json.dumps(report.to_dict(), indent=2)
+
+        elif name == "rollback_create_shadow":
+            hyp_id = args.get("hypothesis_id")
+            if not hyp_id:
+                raise ValueError("'hypothesis_id' is required for rollback_create_shadow.")
+            desc = args.get("description", "")
+            hyp = self.session.shadow_manager.create_hypothesis(hyp_id, description=desc)
+            return json.dumps({
+                "status": "success",
+                "hypothesis": hyp.to_dict(),
+            }, indent=2)
+
+        elif name == "rollback_evaluate_shadow":
+            hyp_id = args.get("hypothesis_id")
+            cmd = args.get("test_cmd")
+            if not hyp_id or not cmd:
+                raise ValueError("'hypothesis_id' and 'test_cmd' are required for rollback_evaluate_shadow.")
+            timeout = float(args.get("timeout_sec", 30.0))
+            res = self.session.shadow_manager.evaluate_hypothesis(hyp_id, test_cmd=cmd, timeout_sec=timeout)
+            return json.dumps({
+                "status": "success",
+                "result": res.to_dict(),
+            }, indent=2)
+
+        elif name == "rollback_promote_shadow":
+            hyp_id = args.get("hypothesis_id")
+            if not hyp_id:
+                raise ValueError("'hypothesis_id' is required for rollback_promote_shadow.")
+            create_cp = args.get("create_checkpoint", True)
+            res = self.session.shadow_manager.promote_hypothesis(hyp_id, create_checkpoint=create_cp)
+            return json.dumps(res, indent=2)
+
+        elif name == "rollback_timeline_graph":
+            branch = args.get("branch")
+            max_nodes = int(args.get("max_nodes", 20))
+            as_json = args.get("as_json", False)
+            if as_json:
+                return json.dumps(self.session.timeline.to_dict(branch=branch), indent=2)
+            else:
+                return self.session.timeline.render_ascii(branch=branch, max_nodes=max_nodes)
+
+        elif name == "rollback_cas_stats":
+            stats = self.session.cas_store.get_stats()
+            return json.dumps({
+                "status": "success",
+                "cas_stats": stats.to_dict(),
+            }, indent=2)
+
         raise ValueError(f"Unknown tool: {name}")
 
     def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -680,7 +838,7 @@ class RollbackMCPServer:
                     "protocolVersion": self.PROTOCOL_VERSION,
                     "serverInfo": {
                         "name": "rollback-engine",
-                        "version": "0.7.0",
+                        "version": "0.8.0",
                     },
                     "capabilities": {
                         "tools": {},

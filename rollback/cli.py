@@ -159,6 +159,43 @@ def main() -> None:
     p_lease.add_argument("--json", action="store_true", help="Output in JSON format.")
     p_lease.add_argument("--root", default=".", help="Root directory path.")
 
+    # Invariants
+    p_inv = subparsers.add_parser("invariant", help="Manage and evaluate workspace invariant rules.")
+    p_inv.add_argument("action", choices=["test", "add", "list"], help="Invariant operation.")
+    p_inv.add_argument("--strict", action="store_true", help="Exit with error if any invariant fails.")
+    p_inv.add_argument("--name", help="Rule name for add.")
+    p_inv.add_argument("--type", choices=["command", "regex_prohibit", "regex_require", "file_size_min", "file_size_max"], default="command", help="Rule type.")
+    p_inv.add_argument("--pattern", help="Command or regex pattern for rule.")
+    p_inv.add_argument("--glob", default="*", help="File glob filter for rule.")
+    p_inv.add_argument("--threshold", type=int, default=0, help="Threshold size in bytes for min/max size rules.")
+    p_inv.add_argument("--json", action="store_true", help="Output in JSON format.")
+    p_inv.add_argument("--root", default=".", help="Root directory path.")
+
+    # Shadow Clone Explorer
+    p_shadow = subparsers.add_parser("shadow", help="Manage ephemeral shadow clone workspaces for hypothesis exploration.")
+    p_shadow.add_argument("action", choices=["create", "eval", "promote", "discard", "list"], help="Shadow operation.")
+    p_shadow.add_argument("--id", help="Hypothesis ID.")
+    p_shadow.add_argument("--desc", default="", help="Description of hypothesis.")
+    p_shadow.add_argument("--cmd", help="Verification command to execute for eval.")
+    p_shadow.add_argument("--timeout", type=float, default=30.0, help="Command timeout in seconds.")
+    p_shadow.add_argument("--no-checkpoint", action="store_true", help="Do not create checkpoint on promote.")
+    p_shadow.add_argument("--json", action="store_true", help="Output in JSON format.")
+    p_shadow.add_argument("--root", default=".", help="Root directory path.")
+
+    # Timeline DAG Visualizer
+    p_time = subparsers.add_parser("timeline", help="Render ASCII or JSON DAG timeline of checkpoints and branches.")
+    p_time.add_argument("--branch", default=None, help="Filter by branch name.")
+    p_time.add_argument("--max", type=int, default=20, help="Maximum number of nodes to render.")
+    p_time.add_argument("--json", action="store_true", help="Output timeline DAG in JSON format.")
+    p_time.add_argument("--root", default=".", help="Root directory path.")
+
+    # CAS Deduplication Store
+    p_cas = subparsers.add_parser("cas", help="Query and maintain Content-Addressed Storage (CAS) deduplication.")
+    p_cas.add_argument("--stats", action="store_true", help="Show deduplication and compression statistics.")
+    p_cas.add_argument("--gc", action="store_true", help="Garbage collect unreferenced CAS objects.")
+    p_cas.add_argument("--json", action="store_true", help="Output in JSON format.")
+    p_cas.add_argument("--root", default=".", help="Root directory path.")
+
 
     args = parser.parse_args()
     session = RollbackSession(root_dir=args.root)
@@ -524,6 +561,137 @@ def main() -> None:
                 print("Lease revoked successfully." if ok else "Lease ID not found.")
         except Exception as e:
             print(f"Lease error: {e}")
+            sys.exit(1)
+
+    elif args.command == "invariant":
+        import json
+        from .invariants import InvariantRule, InvariantType
+        ig = session.invariant_gate
+        try:
+            if args.action == "test":
+                report = ig.evaluate(strict=args.strict)
+                if args.json:
+                    print(json.dumps(report.to_dict(), indent=2))
+                else:
+                    status_str = "PASSED" if report.passed else "FAILED"
+                    print(f"Invariant Verification [{status_str}]: {report.passed_rules}/{report.total_rules} rules satisfied ({report.duration_ms:.1f}ms)")
+                    if report.violations:
+                        print("Violations:")
+                        for v in report.violations:
+                            loc = f" in {v.file_path}" if v.file_path else ""
+                            print(f"  - [{v.severity.upper()}] {v.rule_name}{loc}: {v.message}")
+                    if not report.passed and args.strict:
+                        sys.exit(1)
+            elif args.action == "add":
+                if not args.name or not args.pattern:
+                    print("Error: --name and --pattern required for invariant add.")
+                    sys.exit(1)
+                rule = InvariantRule(
+                    name=args.name,
+                    rule_type=InvariantType(args.type),
+                    target_pattern=args.pattern,
+                    file_glob=args.glob,
+                    threshold_value=args.threshold,
+                )
+                ig.add_rule(rule)
+                ig.save_rules()
+                print(f"Saved invariant rule '{rule.name}' ({rule.rule_type.value})")
+            elif args.action == "list":
+                rules = ig.list_rules()
+                if args.json:
+                    print(json.dumps([r.to_dict() for r in rules], indent=2))
+                else:
+                    print(f"Registered Invariant Rules ({len(rules)}):")
+                    for r in rules:
+                        print(f"  - {r.name} [{r.rule_type.value}]: {r.target_pattern}")
+
+        except Exception as e:
+            print(f"Invariant error: {e}")
+            sys.exit(1)
+
+    elif args.command == "shadow":
+        import json
+        sm = session.shadow_manager
+        try:
+            if args.action == "create":
+                if not args.id:
+                    print("Error: --id required for shadow create.")
+                    sys.exit(1)
+                hyp = sm.create_hypothesis(args.id, description=args.desc)
+                if args.json:
+                    print(json.dumps(hyp.to_dict(), indent=2))
+                else:
+                    print(f"Created shadow hypothesis '{hyp.hypothesis_id}' at {hyp.shadow_path}")
+            elif args.action == "eval":
+                if not args.id or not args.cmd:
+                    print("Error: --id and --cmd required for shadow eval.")
+                    sys.exit(1)
+                res = sm.evaluate_hypothesis(args.id, test_cmd=args.cmd, timeout_sec=args.timeout)
+                if args.json:
+                    print(json.dumps(res.to_dict(), indent=2))
+                else:
+                    pass_str = "PASSED" if res.passed else "FAILED"
+                    print(f"Shadow Hypothesis [{pass_str}]: score={res.score:.2f} (Exit: {res.exit_code}, {res.duration_ms:.1f}ms)")
+                    if res.delta_files:
+                        print("Modified files in shadow:")
+                        for df in res.delta_files:
+                            print(f"  {df}")
+            elif args.action == "promote":
+                if not args.id:
+                    print("Error: --id required for shadow promote.")
+                    sys.exit(1)
+                res = sm.promote_hypothesis(args.id, create_checkpoint=not args.no_checkpoint)
+                if args.json:
+                    print(json.dumps(res, indent=2))
+                else:
+                    print(f"Promoted shadow hypothesis '{args.id}': {res['promoted_files_count']} files updated.")
+                    if res.get("checkpoint_id"):
+                        print(f"  Created checkpoint: {res['checkpoint_id']}")
+            elif args.action == "discard":
+                if not args.id:
+                    print("Error: --id required for shadow discard.")
+                    sys.exit(1)
+                ok = sm.discard_hypothesis(args.id)
+                print(f"Shadow hypothesis '{args.id}' discarded." if ok else "Hypothesis not found.")
+            elif args.action == "list":
+                hyps = sm.list_hypotheses()
+                if args.json:
+                    print(json.dumps([h.to_dict() for h in hyps], indent=2))
+                else:
+                    print(f"Shadow Hypotheses ({len(hyps)}):")
+                    for h in hyps:
+                        print(f"  - [{h.status.upper()}] {h.hypothesis_id} (Score: {h.score}, Path: {h.shadow_path})")
+        except Exception as e:
+            print(f"Shadow error: {e}")
+            sys.exit(1)
+
+    elif args.command == "timeline":
+        import json
+        tl = session.timeline
+        try:
+            if args.json:
+                print(json.dumps(tl.to_dict(branch=args.branch), indent=2))
+            else:
+                print(tl.render_ascii(branch=args.branch, max_nodes=args.max))
+        except Exception as e:
+            print(f"Timeline error: {e}")
+            sys.exit(1)
+
+    elif args.command == "cas":
+        import json
+        cas = session.cas_store
+        try:
+            stats = cas.get_stats()
+            if args.json:
+                print(json.dumps(stats.to_dict(), indent=2))
+            else:
+                print("Content-Addressed Storage (CAS) Deduplication:")
+                print(f"  Total Objects: {stats.total_objects}")
+                print(f"  Stored Bytes:  {stats.stored_bytes:,} bytes")
+                print(f"  Raw Bytes:     {stats.raw_bytes:,} bytes")
+                print(f"  Dedup Ratio:   {stats.deduplication_ratio:.2f}x (Saved: {stats.savings_percent:.1f}%)")
+        except Exception as e:
+            print(f"CAS error: {e}")
             sys.exit(1)
 
 

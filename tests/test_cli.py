@@ -261,3 +261,67 @@ def test_cli_lifecycle(workspace):
     assert res_lease_list.returncode == 0
     assert "Active Workspace Leases (1)" in res_lease_list.stdout
 
+    # 18. Invariant CLI
+    res_inv_add = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "invariant", "add", "--name", "cli_test_rule", "--pattern", f'"{sys.executable}" -c "exit(0)"', "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_inv_add.returncode == 0
+    assert "Saved invariant rule" in res_inv_add.stdout
+
+    res_inv_test = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "invariant", "test", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_inv_test.returncode == 0
+    assert "Invariant Verification [PASSED]" in res_inv_test.stdout
+
+    # 19. Shadow CLI
+    res_sh_create = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "shadow", "create", "--id", "cli-hyp-1", "--desc", "CLI shadow test", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_sh_create.returncode == 0
+    assert "Created shadow hypothesis" in res_sh_create.stdout
+
+    res_sh_eval = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "shadow", "eval", "--id", "cli-hyp-1", "--cmd", f'"{sys.executable}" -c "exit(0)"', "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_sh_eval.returncode == 0
+    assert "Shadow Hypothesis [PASSED]" in res_sh_eval.stdout
+
+    # 20. Timeline CLI
+    res_tl = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "timeline", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_tl.returncode == 0
+    assert "Timeline DAG" in res_tl.stdout
+
+    # 21. CAS CLI
+    res_cas = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "cas", "--stats", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_cas.returncode == 0
+    assert "Content-Addressed Storage (CAS) Deduplication" in res_cas.stdout
+

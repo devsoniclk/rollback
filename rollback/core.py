@@ -85,6 +85,7 @@ class RollbackSession:
         security_policy: Optional[SecurityPolicy] = None,
     ):
         self.root = Path(root_dir).resolve()
+        self.root_dir = self.root
         self.journal_dir = Path(journal_dir) if journal_dir else self.root / ".rollback"
         self.blobs_dir = self.journal_dir / "blobs"
         self.checkpoints_dir = self.journal_dir / "checkpoints"
@@ -246,6 +247,22 @@ class RollbackSession:
             parent_id=data.get("parent_id"),
             branch=data.get("branch", "main"),
         )
+
+    def list_checkpoints(self) -> List[Checkpoint]:
+        """Returns all recorded checkpoints in chronological order."""
+        cps = []
+        for cid in self.history:
+            try:
+                cp = self.get_checkpoint(cid)
+                if cp:
+                    cps.append(cp)
+            except Exception:
+                continue
+        return cps
+
+    def get_current_branch(self) -> str:
+        """Returns the active timeline branch."""
+        return getattr(self, "current_branch", "main") or "main"
 
     def plan_revert(self, checkpoint_id: str = "HEAD") -> RevertPlan:
         """Generates a dry-run plan of operations required to revert without modifying disk."""
@@ -698,6 +715,59 @@ class RollbackSession:
     def release_lease(self, token: str) -> bool:
         """Releases a multi-agent file lease."""
         return self.lease_manager.release(token)
+
+    def create_checkpoint(
+        self,
+        label: str = "snapshot",
+        tag: Optional[str] = None,
+        target_files: Optional[List[str]] = None,
+    ) -> Checkpoint:
+        """Alias for checkpoint creation with optional immediate tagging."""
+        cp = self.checkpoint(label=label, target_files=target_files)
+        if tag:
+            self.tag(cp.id, tag)
+        return cp
+
+    def list_checkpoints(self) -> List[Checkpoint]:
+        """Returns all checkpoints in session history in chronological order."""
+        res: List[Checkpoint] = []
+        for cid in self.history:
+            cp = self.get_checkpoint(cid)
+            if cp is not None:
+                res.append(cp)
+        return res
+
+    def get_current_branch(self) -> str:
+        """Returns active branch name."""
+        return self.current_branch
+
+    @property
+    def invariant_gate(self) -> Any:
+        """Returns the invariant assertion gate for this workspace."""
+        from .invariants import InvariantGate
+        return InvariantGate(self.root)
+
+    def assert_invariants(self, strict: bool = False) -> Any:
+        """Evaluates declared invariant rules across the workspace."""
+        return self.invariant_gate.evaluate(strict=strict)
+
+    @property
+    def shadow_manager(self) -> Any:
+        """Returns the ephemeral shadow clone and hypothesis explorer."""
+        from .shadow import ShadowCloneManager
+        return ShadowCloneManager(self)
+
+    @property
+    def timeline(self) -> Any:
+        """Returns the timeline DAG and visual tree visualizer."""
+        from .timeline import TimelineGraph
+        return TimelineGraph(self)
+
+    @property
+    def cas_store(self) -> Any:
+        """Returns the Content-Addressed Storage (CAS) deduplication store."""
+        from .cas import CASStore
+        return CASStore(self.journal_dir / "cas")
 
     def _load_history(self) -> None:
         hist_path = self.journal_dir / "history.json"
