@@ -53,8 +53,9 @@ from .shadow import (
     ShadowHypothesis,
 )
 from .timeline import TimelineGraph, TimelineNode
+from .witness_bridge import attest_checkpoint, attest_diff_summary
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "RollbackSession",
     "create_session",
@@ -115,4 +116,6 @@ __all__ = [
     "transactional_tool",
     "transactional_step",
     "async_transactional_step",
+    "attest_checkpoint",
+    "attest_diff_summary",
 ]

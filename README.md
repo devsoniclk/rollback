@@ -5,7 +5,7 @@
 [![CI](https://github.com/devsoniclk/rollback/actions/workflows/ci.yml/badge.svg)](https://github.com/devsoniclk/rollback/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/rollback-engine/)
-[![Version](https://img.shields.io/badge/version-v0.8.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.8.0)
+[![Version](https://img.shields.io/badge/version-v0.9.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.9.0)
 
 ---
 
@@ -30,6 +30,7 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Git Bidirectional Bridge**: Export micro-checkpoints to real Git commits with co-author trailers, and import Git history into rollback tagged checkpoints.
 - **Standard Unified Diff Patch Engine**: Export standard patch files between checkpoints or live workspace, and atomically apply patches with dry-run verification.
 - **Microsecond Checkpoints**: Fast content-hashed delta snapshots before each tool call.
+- **`agent-witness` Cryptographic Attestation Integration (`rollback.witness_bridge`)**: Export savepoints, dirty delta diffs, and workspace leases directly into signed RFC 6962 Merkle deliberation steps and zkVM receipts for tamper-evident provenance.
 - **Atomic POSIX Revert**: Restores modified files, cleans up rogue newly-created files, and resurrects deleted files atomically using `os.replace`.
 - **Dry-Run Revert Planning**: Inspect `RevertPlan` to verify exactly which files will be restored, deleted, or resurrected before modifying disk.
 - **Deterministic Time-Travel Replay**: Step-by-step playback with cryptographic SHA-256 integrity verification across checkpoint histories and branches.
