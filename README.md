@@ -5,7 +5,7 @@
 [![CI](https://github.com/devsoniclk/rollback/actions/workflows/ci.yml/badge.svg)](https://github.com/devsoniclk/rollback/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/rollback-engine/)
-[![Version](https://img.shields.io/badge/version-v0.9.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.9.0)
+[![Version](https://img.shields.io/badge/version-v0.10.0-green.svg)](https://github.com/devsoniclk/rollback/releases/tag/v0.10.0)
 
 ---
 
@@ -35,7 +35,7 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Dry-Run Revert Planning**: Inspect `RevertPlan` to verify exactly which files will be restored, deleted, or resurrected before modifying disk.
 - **Deterministic Time-Travel Replay**: Step-by-step playback with cryptographic SHA-256 integrity verification across checkpoint histories and branches.
 - **Interactive Dark-Mode HTML Dossier**: Dependency-free standalone HTML visualizer with embedded responsive SVG checkpoint DAG, file deltas, and security audit tables.
-- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server (24 tools) for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
+- **Native Model Context Protocol (MCP)**: Zero-dependency stdio MCP server (29 tools) for instant plug-and-play with Claude Code, OpenBot, Cursor, and Cline.
 - **Timeline Branching**: Explore multiple agent solution hypotheses in parallel with lightweight `branch` and `checkout` without git conflicts.
 - **Portable Bundle Archiving**: Export/import complete sessions as `.rbk.tar.gz` bundles for cross-environment agent migration (Fly.io, Docker, E2B, Modal).
 - **Async & Sync Agent Tooling**: Native support for synchronous and `async def` agent tool loops (LangChain, AutoGen, CrewAI, MCP tools).
@@ -59,7 +59,9 @@ Autonomous AI coding agents (Claude Code, OpenBot, Cursor, Codex, AutoGPT, Devin
 - **Unified Diff Patches**: `export_patch()` and `apply_patch()`.
 - **Interactive HTML Session Dossier**: `session.to_html("dossier.html")` or `rollback report --html dossier.html`.
 - **Deterministic Replay Engine**: `session.replay("target_id", step_by_step=True)` or `rollback replay <tag>`.
-- **Native MCP Tool Server (24 Tools)**: `rollback mcp` or `python -m rollback.mcp_server`.
+- **Multi-Agent Optimistic Concurrency Control (OCC / MVCC)**: `MVCCManager(root_dir)` with serializable read/write-set tracking, fine-grained conflict detection, and `rollback occ [--json]`.
+- **Consensus-Guarded Atomic Commits & Byzantine Fault Tolerance**: `ConsensusGuardedSession(session, proposal_id)` requiring verified cryptographic BFT certificates before disk commits, with immediate rollback on rejection or equivocation, and `rollback con-guard begin/commit/abort`.
+- **Native MCP Tool Server (29 Tools)**: `rollback mcp` or `python -m rollback.mcp_server`.
 - **Security Policy Guard**: `SecurityPolicy` blocks path escapes, symlink traversal, and protects `.env` secrets.
 - **Dry-Run Revert Planning**: `session.plan_revert("HEAD")` or `rollback revert --dry-run`.
 - **Timeline Branching**: `session.create_branch("feature-b")`, `session.checkout("feature-b")`.

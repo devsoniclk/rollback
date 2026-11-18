@@ -196,6 +196,20 @@ def main() -> None:
     p_cas.add_argument("--json", action="store_true", help="Output in JSON format.")
     p_cas.add_argument("--root", default=".", help="Root directory path.")
 
+    # Consensus Guard
+    p_con = subparsers.add_parser("con-guard", help="Consensus-guarded atomic commits and BFT verification.")
+    p_con.add_argument("action", choices=["begin", "commit", "abort"], help="Consensus action to perform.")
+    p_con.add_argument("--proposal", default="prop-default", help="Unique proposal identifier.")
+    p_con.add_argument("--cert", help="Path to BFT certificate JSON file for commit.")
+    p_con.add_argument("--evidence", help="Path to Byzantine fault evidence JSON file for abort.")
+    p_con.add_argument("--json", action="store_true", help="Output in JSON format.")
+    p_con.add_argument("--root", default=".", help="Root directory path.")
+
+    # Optimistic Concurrency Control (OCC / MVCC)
+    p_occ = subparsers.add_parser("occ", help="Multi-agent optimistic concurrency control status and conflict detection.")
+    p_occ.add_argument("--json", action="store_true", help="Output in JSON format.")
+    p_occ.add_argument("--root", default=".", help="Root directory path.")
+
 
     args = parser.parse_args()
     session = RollbackSession(root_dir=args.root)
@@ -693,6 +707,58 @@ def main() -> None:
         except Exception as e:
             print(f"CAS error: {e}")
             sys.exit(1)
+
+    elif args.command == "con-guard":
+        import json
+        from .consensus_bridge import ConsensusGuardedSession, ConsensusVerificationError
+
+        guarded = ConsensusGuardedSession(session, proposal_id=args.proposal)
+        if args.action == "begin":
+            cp_id = guarded.stage()
+            if args.json:
+                print(json.dumps({"status": "staged", "proposal_id": guarded.proposal_id, "checkpoint_id": cp_id, "digest": guarded.trajectory_digest}))
+            else:
+                print(f"Staged consensus proposal '{guarded.proposal_id}' at checkpoint '{cp_id}'.")
+                print(f"Trajectory Digest: {guarded.trajectory_digest}")
+
+        elif args.action == "commit":
+            if not args.cert:
+                print("Error: --cert path required for commit.")
+                sys.exit(1)
+            with open(args.cert, "r") as f:
+                cert = json.load(f)
+            # Find staged checkpoint matching proposal
+            cp_id = guarded.stage()  # or verify staged
+            try:
+                res = guarded.verify_and_commit(cert)
+                if args.json:
+                    print(json.dumps({"status": "committed", "result": res}))
+                else:
+                    print(f"Successfully committed consensus proposal '{args.proposal}'.")
+            except ConsensusVerificationError as e:
+                print(f"Consensus verification failed: {e}")
+                sys.exit(1)
+
+        elif args.action == "abort":
+            evidence = {}
+            if args.evidence:
+                with open(args.evidence, "r") as f:
+                    evidence = json.load(f)
+            guarded.stage()
+            res = guarded.abort_on_fault(evidence)
+            if args.json:
+                print(json.dumps({"status": "aborted", "result": res}))
+            else:
+                print(f"Aborted proposal '{args.proposal}' and rolled back workspace.")
+
+    elif args.command == "occ":
+        import json
+        from .concurrency import MVCCManager
+        mvcc = MVCCManager(session.root_dir)
+        if args.json:
+            print(json.dumps({"status": "ok", "tracked_files": len(mvcc._committed_versions)}, indent=2))
+        else:
+            print(f"MVCC Concurrency Manager: Tracking {len(mvcc._committed_versions)} committed file versions.")
 
 
 

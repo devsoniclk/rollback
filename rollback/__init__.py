@@ -9,7 +9,7 @@ standard MCP tool server, unified diff inspection, tagging, garbage collection,
 selective reverts & cherry-picks, structural integrity gate, workspace sentinel,
 auto-healing execution watchdog, speculative memory overlay sandbox, multi-agent workspace leases,
 pre/post-action invariant assertion gate, ephemeral shadow clones & hypothesis explorer,
-interactive timeline DAG visualizer, and content-addressed chunk deduplication CAS store.
+interactive timeline DAG visualizer, content-addressed chunk deduplication CAS store, consensus-guarded BFT atomic commits, and multi-agent optimistic concurrency control (OCC).
 """
 
 from .cas import CASStore, DeduplicationReport
@@ -54,8 +54,10 @@ from .shadow import (
 )
 from .timeline import TimelineGraph, TimelineNode
 from .witness_bridge import attest_checkpoint, attest_diff_summary
+from .consensus_bridge import ConsensusGuardedSession, ConsensusVerificationError
+from .concurrency import MVCCManager, TransactionConflictError
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = [
     "RollbackSession",
     "create_session",
@@ -118,4 +120,8 @@ __all__ = [
     "async_transactional_step",
     "attest_checkpoint",
     "attest_diff_summary",
+    "ConsensusGuardedSession",
+    "ConsensusVerificationError",
+    "MVCCManager",
+    "TransactionConflictError",
 ]

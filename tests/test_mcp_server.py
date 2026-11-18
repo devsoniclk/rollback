@@ -57,7 +57,12 @@ def test_mcp_server_protocol_lifecycle() -> None:
         assert "rollback_promote_shadow" in tool_names
         assert "rollback_timeline_graph" in tool_names
         assert "rollback_cas_stats" in tool_names
-        assert len(tool_names) == 24
+        assert "rollback_attest_checkpoint" in tool_names
+        assert "rollback_consensus_guard_begin" in tool_names
+        assert "rollback_consensus_guard_commit" in tool_names
+        assert "rollback_consensus_guard_abort" in tool_names
+        assert "rollback_occ_transaction" in tool_names
+        assert len(tool_names) == 29
 
         # 4. Create snapshot tool call
         (Path(tmpdir) / "test.txt").write_text("hello mcp")

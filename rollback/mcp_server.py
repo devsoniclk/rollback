@@ -12,6 +12,9 @@ from .git_bridge import GitBridge
 from .html_report import render_html_report
 from .merge import MergeConflictError, MergeEngine
 from .patch import apply_patch, export_patch
+from .witness_bridge import attest_checkpoint, attest_diff_summary
+from .consensus_bridge import ConsensusGuardedSession, ConsensusVerificationError
+from .concurrency import MVCCManager, TransactionConflictError
 from .security import SecurityPolicy, SecurityViolationError
 
 
@@ -26,6 +29,8 @@ class RollbackMCPServer:
     def __init__(self, root_dir: str = "."):
         self.root_dir = root_dir
         self.session = RollbackSession(root_dir=root_dir)
+        self._guarded_sessions: Dict[str, ConsensusGuardedSession] = {}
+        self._mvcc_manager: Optional[MVCCManager] = None
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         return [
@@ -499,6 +504,107 @@ class RollbackMCPServer:
                     "properties": {},
                 },
             },
+            {
+                "name": "rollback_attest_checkpoint",
+                "description": "Attest a rollback checkpoint into an agent-witness deliberation step or receipt.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "checkpoint_id": {
+                            "type": "string",
+                            "description": "Target checkpoint ID to attest.",
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent identifier proposing attestation.",
+                            "default": "rollback-agent",
+                        },
+                    },
+                    "required": ["checkpoint_id"],
+                },
+            },
+            {
+                "name": "rollback_consensus_guard_begin",
+                "description": "Begin a consensus-guarded transaction requiring multi-agent BFT approval before commit.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "proposal_id": {
+                            "type": "string",
+                            "description": "Unique proposal identifier for the mutation.",
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Proposing agent ID.",
+                            "default": "agent-proposer",
+                        },
+                        "label": {
+                            "type": "string",
+                            "description": "Descriptive label for checkpoint.",
+                            "default": "consensus-staged-proposal",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "rollback_consensus_guard_commit",
+                "description": "Commit a consensus-guarded workspace transaction by providing a verified BFT certificate.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "proposal_id": {
+                            "type": "string",
+                            "description": "Proposal identifier to commit.",
+                        },
+                        "certificate": {
+                            "type": "object",
+                            "description": "BFTConsensusCertificate JSON dictionary.",
+                        },
+                    },
+                    "required": ["proposal_id", "certificate"],
+                },
+            },
+            {
+                "name": "rollback_consensus_guard_abort",
+                "description": "Abort a consensus-guarded transaction and restore baseline workspace on detected Byzantine fault or equivocation.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "proposal_id": {
+                            "type": "string",
+                            "description": "Proposal identifier to abort.",
+                        },
+                        "evidence": {
+                            "type": "object",
+                            "description": "Byzantine fault evidence dictionary.",
+                        },
+                    },
+                    "required": ["proposal_id"],
+                },
+            },
+            {
+                "name": "rollback_occ_transaction",
+                "description": "Execute an optimistic concurrency control transaction across multiple workspace files with conflict detection.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent identifier.",
+                        },
+                        "reads": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Relative file paths to verify in read set.",
+                        },
+                        "writes": {
+                            "type": "object",
+                            "description": "Map of relative_path to new file content string.",
+                        },
+                    },
+                    "required": ["agent_id"],
+                },
+            },
         ]
 
     def execute_tool(self, name: str, args: Dict[str, Any]) -> str:
@@ -823,6 +929,69 @@ class RollbackMCPServer:
                 "status": "success",
                 "cas_stats": stats.to_dict(),
             }, indent=2)
+
+        elif name == "rollback_attest_checkpoint":
+            cp_id = args.get("checkpoint_id")
+            agent_id = args.get("agent_id", "rollback-agent")
+            cp = self.session.get_checkpoint(cp_id)
+            if not cp:
+                return json.dumps({"status": "error", "message": f"Checkpoint '{cp_id}' not found."}, indent=2)
+            res = attest_checkpoint(cp, agent_id=agent_id)
+            return json.dumps({"status": "success", "attestation": res}, indent=2)
+
+        elif name == "rollback_consensus_guard_begin":
+            proposal_id = args.get("proposal_id")
+            agent_id = args.get("agent_id", "agent-proposer")
+            label = args.get("label", "consensus-staged-proposal")
+            guarded = ConsensusGuardedSession(self.session, proposal_id=proposal_id, agent_id=agent_id)
+            cp_id = guarded.stage(label=label)
+            self._guarded_sessions[guarded.proposal_id] = guarded
+            return json.dumps({
+                "status": "success",
+                "proposal_id": guarded.proposal_id,
+                "checkpoint_id": cp_id,
+                "trajectory_digest": guarded.trajectory_digest,
+            }, indent=2)
+
+        elif name == "rollback_consensus_guard_commit":
+            proposal_id = args.get("proposal_id")
+            certificate = args.get("certificate", {})
+            if proposal_id not in self._guarded_sessions:
+                return json.dumps({"status": "error", "message": f"Guarded proposal '{proposal_id}' not found."}, indent=2)
+            guarded = self._guarded_sessions[proposal_id]
+            try:
+                commit_res = guarded.verify_and_commit(certificate)
+                del self._guarded_sessions[proposal_id]
+                return json.dumps({"status": "success", "commit": commit_res}, indent=2)
+            except ConsensusVerificationError as e:
+                del self._guarded_sessions[proposal_id]
+                return json.dumps({"status": "rejected_and_reverted", "error": str(e), "details": e.details}, indent=2)
+
+        elif name == "rollback_consensus_guard_abort":
+            proposal_id = args.get("proposal_id")
+            evidence = args.get("evidence", {})
+            if proposal_id not in self._guarded_sessions:
+                return json.dumps({"status": "error", "message": f"Guarded proposal '{proposal_id}' not found."}, indent=2)
+            guarded = self._guarded_sessions.pop(proposal_id)
+            abort_res = guarded.abort_on_fault(evidence)
+            return json.dumps({"status": "aborted_and_reverted", "result": abort_res}, indent=2)
+
+        elif name == "rollback_occ_transaction":
+            agent_id = args.get("agent_id", "agent")
+            reads = args.get("reads", [])
+            writes = args.get("writes", {})
+            if self._mvcc_manager is None:
+                self._mvcc_manager = MVCCManager(self.root_dir)
+            tx_id = self._mvcc_manager.begin_transaction(agent_id=agent_id)
+            for r in reads:
+                self._mvcc_manager.record_read(tx_id, r)
+            for wpath, content in writes.items():
+                self._mvcc_manager.stage_write(tx_id, wpath, content)
+            try:
+                commit_info = self._mvcc_manager.validate_and_commit(tx_id)
+                return json.dumps({"status": "success", "transaction": commit_info}, indent=2)
+            except TransactionConflictError as e:
+                return json.dumps({"status": "conflict", "message": str(e), "conflicts": e.conflicts}, indent=2)
 
         raise ValueError(f"Unknown tool: {name}")
 

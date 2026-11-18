@@ -325,3 +325,25 @@ def test_cli_lifecycle(workspace):
     assert res_cas.returncode == 0
     assert "Content-Addressed Storage (CAS) Deduplication" in res_cas.stdout
 
+    # 22. Con-Guard CLI
+    res_con_begin = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "con-guard", "begin", "--proposal", "cli-prop-1", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_con_begin.returncode == 0
+    assert "Staged consensus proposal" in res_con_begin.stdout
+
+    # 23. OCC CLI
+    res_occ = subprocess.run(
+        [sys.executable, "-m", "rollback.cli", "occ", "--root", str(workspace)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(repo_root)},
+    )
+    assert res_occ.returncode == 0
+    assert "MVCC Concurrency Manager" in res_occ.stdout
+
